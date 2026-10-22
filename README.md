@@ -38,6 +38,16 @@ The app uses the client-credentials flow, which gives it read access to any publ
 2. Copy the ID and secret into `.env` as `WCL_CLIENT_ID` and `WCL_CLIENT_SECRET`.
 3. Optional: to use a zone other than the current raid, set `WCL_ZONE_ID`.
 
+## Docker and CI
+
+Every push to `main` runs [.github/workflows/ci.yml](.github/workflows/ci.yml): a typecheck, then (if it passes) a Docker image build pushed to `ghcr.io/joaofazolo/wow-dashboard`, tagged `latest` and with the commit SHA. Pull requests run the typecheck only.
+
+The image doesn't contain your `.env`; pass the keys at runtime:
+
+```bash
+docker run -d -p 3000:3000 --env-file .env ghcr.io/joaofazolo/wow-dashboard:latest
+```
+
 ## Layout
 - `src/server.ts`: HTTP server. It caches results for 5 minutes, serves `/api/characters`, and bundles the client with esbuild on request.
 - `src/sources/*`: one module per API. Each returns normalized types from `src/types.ts`.

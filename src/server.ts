@@ -73,7 +73,7 @@ function send(res: ServerResponse, status: number, type: string, body: string) {
   res.end(body);
 }
 
-createServer(async (req, res) => {
+const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
   try {
     if (url.pathname === "/") {
@@ -99,3 +99,8 @@ createServer(async (req, res) => {
   console.log(`  Blizzard:     ${blizzardEnabled ? "enabled" : "sample data (no credentials)"}`);
   console.log(`  WarcraftLogs: ${warcraftLogsEnabled ? "enabled" : "sample data (no credentials)"}`);
 });
+
+// In a container Node is PID 1, which ignores SIGTERM unless handled, so `docker stop` would wait 10s and then kill it.
+for (const signal of ["SIGTERM", "SIGINT"] as const) {
+  process.on(signal, () => server.close(() => process.exit(0)).closeAllConnections());
+}
