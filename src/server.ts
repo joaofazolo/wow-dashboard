@@ -1,4 +1,5 @@
 import { createServer, type ServerResponse } from "node:http";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
@@ -106,7 +107,7 @@ function loadLegacy(region: string, name: string, force: boolean): Promise<Sourc
   return value;
 }
 
-async function clientBundle(): Promise<string> {
+async function buildBundle(): Promise<{ js: string; version: string }> {
   const result = await build({
     entryPoints: [fileURLToPath(new URL("./client/app.ts", import.meta.url))],
     bundle: true,
@@ -114,11 +115,21 @@ async function clientBundle(): Promise<string> {
     format: "esm",
     target: "es2022",
   });
-  return result.outputFiles[0].text;
+  const js = result.outputFiles[0].text;
+  return { js, version: createHash("sha1").update(js).digest("hex").slice(0, 12) };
 }
 
-function send(res: ServerResponse, status: number, type: string, body: string) {
-  res.writeHead(status, { "Content-Type": type, "Cache-Control": "no-store" });
+// In production the code can't change while the server runs, so it's bundled once; in dev it's rebuilt per request.
+let bundled: Promise<{ js: string; version: string }> | null = null;
+function clientBundle() {
+  if (process.env.NODE_ENV !== "production") return buildBundle();
+  bundled ??= buildBundle();
+  bundled.catch(() => (bundled = null));
+  return bundled;
+}
+
+function send(res: ServerResponse, status: number, type: string, body: string, cacheControl = "no-store") {
+  res.writeHead(status, { "Content-Type": type, "Cache-Control": cacheControl });
   res.end(body);
 }
 
@@ -126,10 +137,16 @@ const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
   try {
     if (url.pathname === "/") {
-      return send(res, 200, "text/html; charset=utf-8", await readFile(new URL("../public/index.html", import.meta.url), "utf8"));
+      // The script URL carries a hash of the code, so a deploy gives it a new address that no cache (Cloudflare, the
+      // browser) has seen. Without it, a cache in front of the server can keep serving the old script with the new page.
+      const [html, { version }] = await Promise.all([readFile(new URL("../public/index.html", import.meta.url), "utf8"), clientBundle()]);
+      return send(res, 200, "text/html; charset=utf-8", html.replace('src="/app.js"', `src="/app.js?v=${version}"`));
     }
     if (url.pathname === "/app.js") {
-      return send(res, 200, "text/javascript; charset=utf-8", await clientBundle());
+      const { js, version } = await clientBundle();
+      // A versioned URL never changes content, so it can be cached for good; the bare URL stays uncached.
+      const immutable = url.searchParams.get("v") === version;
+      return send(res, 200, "text/javascript; charset=utf-8", js, immutable ? "public, max-age=31536000, immutable" : "no-store");
     }
     if (url.pathname === "/api/character") {
       // The character list lives in the browser, so any character can be requested.
