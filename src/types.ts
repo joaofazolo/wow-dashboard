@@ -188,7 +188,9 @@ export interface ForeverCharacter {
   /** Null when the endpoint failed; each section loads on its own. */
   gear: { slot: string; name: string; itemLevel: number | null; quality: string | null }[] | null;
   /** Talent builds (more than one with dual spec). Each lists its talent trees with points spent, most points first. */
-  builds: { active: boolean; trees: { name: string; points: number; talents: { name: string; rank: number }[] }[] }[] | null;
+  builds: { active: boolean; trees: { name: string; points: number; talents: { id: number; name: string; rank: number }[] }[] }[] | null;
+  /** The class's three talent trees, to draw the builds on. Null if the layout couldn't be loaded. */
+  talentTrees: TalentTree[] | null;
   /** Classic PvP rank (0 = none). */
   pvp: { honorLevel: number | null; honorableKills: number | null; rank: number | null; maps: { name: string; played: number; won: number; lost: number }[] } | null;
   surname: string | null;
@@ -214,6 +216,25 @@ export interface ForeverCharacter {
   /** Lifetime statistics by category, e.g. Kills → Total kills 2040. */
   lifetime: { category: string; stats: { name: string; value: string }[] }[] | null;
   transmogs: number | null;
+}
+
+/** One spec's talent tree as laid out in game: `col` 0–3, `row` from 1 (each row needs 5 more points in the tree). */
+export interface TalentTree {
+  spec: string;
+  icon: string | null;
+  rows: number;
+  nodes: {
+    id: number;
+    row: number;
+    col: number;
+    name: string;
+    talentId: number;
+    icon: string | null;
+    /** Description at each rank; the length is the max rank. */
+    ranks: string[];
+    /** Node that must be maxed first (drawn as an arrow). */
+    requires: number | null;
+  }[];
 }
 
 /** Forever's rulesets (PvP, Normal, Roleplay…) replace realms; each has its own up/down status. */
@@ -246,6 +267,24 @@ export interface ProfessionProgress {
 
 export interface ForeverProfessions {
   professions: ProfessionProgress[];
+}
+
+/** A quest as the API describes it. Blizzard doesn't give quest levels; XP is the reward at full value. */
+export interface QuestInfo {
+  id: number;
+  name: string;
+  area: string | null;
+  /** "Dungeon", "Elite", "Raid"… or null for a normal quest. */
+  type: string | null;
+  xp: number | null;
+}
+
+/** Two Forever characters' quests side by side. Without a second character everything is in `onlyMe`. */
+export interface ForeverQuestCompare {
+  me: { name: string; level: number };
+  other: { name: string; level: number } | null;
+  inProgress: { shared: QuestInfo[]; onlyMe: QuestInfo[]; onlyOther: QuestInfo[] };
+  completed: { both: number; onlyMe: QuestInfo[]; onlyOther: QuestInfo[] };
 }
 
 /** One Legacy Challenge (an account-wide achievement worth 1 Legacy Point). */

@@ -3,6 +3,7 @@
 import type { ForeverCharacter, ForeverRuleset } from "../types.js";
 import { blizzardGet } from "./blizzard.js";
 import { errorMessage } from "./http.js";
+import { classTalentTrees } from "./foreverTalents.js";
 
 const named = (x?: { name?: string } | null) => x?.name ?? null;
 
@@ -32,7 +33,7 @@ interface Equipment {
 interface Specializations {
   specialization_groups?: {
     is_active: boolean;
-    specializations: { specialization_name: string; spent_points: number; talents?: { talent: { name: string }; talent_rank: number }[] }[];
+    specializations: { specialization_name: string; spent_points: number; talents?: { talent: { id: number; name: string }; talent_rank: number }[] }[];
   }[];
 }
 
@@ -124,10 +125,17 @@ export async function fetchForeverCharacter(region: string, name: string): Promi
   ]);
 
   const asset = (key: string) => media?.assets?.find((a) => a.key === key)?.value ?? null;
+  // The tree layouts are cached per class after the first load, so this is free for every later character.
+  const talentTrees = summary.character_class
+    ? await classTalentTrees(region, summary.character_class.name).catch((err) => {
+        console.warn(`Forever talent trees unavailable for ${summary.character_class!.name}: ${errorMessage(err)}`);
+        return null;
+      })
+    : null;
   const builds = specs?.specialization_groups?.map((g) => ({
     active: g.is_active,
     trees: g.specializations
-      .map((t) => ({ name: t.specialization_name, points: t.spent_points, talents: (t.talents ?? []).map((x) => ({ name: x.talent.name, rank: x.talent_rank })) }))
+      .map((t) => ({ name: t.specialization_name, points: t.spent_points, talents: (t.talents ?? []).map((x) => ({ id: x.talent.id, name: x.talent.name, rank: x.talent_rank })) }))
       .sort((a, b) => b.points - a.points),
   })) ?? null;
   // The profile's active_spec is empty in Forever; the spec is the active build's tree with the most points.
@@ -148,6 +156,7 @@ export async function fetchForeverCharacter(region: string, name: string): Promi
     insetUrl: asset("inset") ?? asset("avatar"),
     gear: equipment?.equipped_items?.map((i) => ({ slot: i.slot.name, name: i.name, itemLevel: i.level?.value ?? null, quality: i.quality?.type ?? null })) ?? null,
     builds,
+    talentTrees,
     pvp: pvp
       ? {
           honorLevel: pvp.honor_level ?? null,

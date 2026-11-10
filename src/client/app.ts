@@ -1,4 +1,4 @@
-import type { BlizzardData, CharacterRef, CharacterStatus, ForeverCharacter, ForeverLegacy, LegacyChallenge, ForeverProfessions, ProfessionProgress, ProfessionRecipe,ForeverRuleset, ForeverStatus, GearItem,KeystoneRun, RaidDifficulty, RaiderIOData, SourceResult, WarcraftLogsData } from "../types.js";
+import type { BlizzardData, CharacterRef, CharacterStatus, ForeverCharacter, ForeverLegacy, LegacyChallenge, ForeverProfessions, ProfessionProgress, ProfessionRecipe,ForeverRuleset, ForeverStatus, TalentTree, ForeverQuestCompare, QuestInfo, GearItem,KeystoneRun, RaidDifficulty, RaiderIOData, SourceResult, WarcraftLogsData } from "../types.js";
 
 const CLASS_COLORS: Record<string, string> = {
   "Death Knight": "#C41E3A", "Demon Hunter": "#A330C9", Druid: "#FF7C0A", Evoker: "#33937F",
@@ -329,8 +329,8 @@ const QUALITY_TYPE: Record<string, string> = {
 
 function foreverGearSection(ch: ForeverCharacter): string {
   const head = `<h3>Gear ${ch.equippedItemLevel ? `<span>${ch.equippedItemLevel} ilvl</span>` : ""}</h3>`;
-  if (!ch.gear) return `<section>${head}<p class="notice">Equipment unavailable.</p></section>`;
-  return `<section>${head}<table class="gear">
+  if (!ch.gear) return `<section data-panel="forever-gear">${head}<p class="notice">Equipment unavailable.</p></section>`;
+  return `<section data-panel="forever-gear">${head}<table class="gear">
     ${ch.gear.map((g) => `<tr>
       <td class="slot">${esc(g.slot)}</td>
       <td class="name" style="color:${(g.quality && QUALITY_TYPE[g.quality]) ?? "inherit"}">${esc(g.name)}</td>
@@ -339,19 +339,91 @@ function foreverGearSection(ch: ForeverCharacter): string {
   </table></section>`;
 }
 
+// Talents are drawn like the in-game talent frame: three trees of 4 columns, a row per tier, arrows for prerequisites.
+const TALENT_PITCH = 54; // px between talent icons
+const TALENT_ICON = 38;
+let talentBuild = 0; // which build is shown when a character has two (dual spec)
+
+type Tree = TalentTree;
+type TreeNode = Tree["nodes"][number];
+
+/** A prerequisite arrow from one talent to the one it unlocks: straight down, sideways, or sideways then down. */
+function talentArrow(from: TreeNode, to: TreeNode, lit: boolean): string {
+  const cx = (n: TreeNode) => n.col * TALENT_PITCH + TALENT_ICON / 2;
+  const top = (n: TreeNode) => (n.row - 1) * TALENT_PITCH;
+  const cls = `tt-arrow${lit ? " lit" : ""}`;
+  const head = 8; // room for the arrowhead before the target icon
+  if (from.col === to.col) {
+    return `<div class="${cls} down" style="left:${cx(from) - 3}px;top:${top(from) + TALENT_ICON}px;height:${top(to) - top(from) - TALENT_ICON - head}px"></div>`;
+  }
+  const left = Math.min(cx(from), cx(to)), width = Math.abs(cx(to) - cx(from));
+  if (from.row === to.row) {
+    const side = to.col > from.col ? "right" : "left";
+    const x = side === "right" ? cx(from) + TALENT_ICON / 2 : cx(to) + TALENT_ICON / 2 + head;
+    return `<div class="${cls} ${side}" style="left:${x}px;top:${top(from) + TALENT_ICON / 2 - 3}px;width:${width - TALENT_ICON - head}px"></div>`;
+  }
+  return `<div class="${cls} flat" style="left:${left}px;top:${top(from) + TALENT_ICON / 2 - 3}px;width:${width}px"></div>
+    <div class="${cls} down" style="left:${cx(to) - 3}px;top:${top(from) + TALENT_ICON / 2}px;height:${top(to) - top(from) - TALENT_ICON / 2 - head}px"></div>`;
+}
+
+function talentTree(tree: Tree, spent: Map<number, number>, points: number, className: string): string {
+  const byId = new Map(tree.nodes.map((n) => [n.id, n]));
+  const rankOf = (n: TreeNode) => spent.get(n.talentId) ?? 0;
+  const maxed = (n: TreeNode) => rankOf(n) >= n.ranks.length;
+  const arrows = tree.nodes.filter((n) => n.requires && byId.has(n.requires)).map((n) => talentArrow(byId.get(n.requires!)!, n, maxed(byId.get(n.requires!)!))).join("");
+
+  const nodes = tree.nodes.map((n) => {
+    const rank = rankOf(n), max = n.ranks.length;
+    const needPoints = (n.row - 1) * 5;
+    const prereq = n.requires ? byId.get(n.requires) : undefined;
+    const open = points >= needPoints && (!prereq || maxed(prereq));
+    const state = rank >= max ? "maxed" : rank > 0 ? "partial" : open ? "open" : "locked";
+    // The tooltip reads like the game's: name, rank, current effect, next rank, and what's still needed.
+    const tip = [
+      `<div class="tt-tip-name">${esc(n.name)}</div>`,
+      `<div>Rank ${rank}/${max}</div>`,
+      rank > 0 ? `<div class="tt-tip-desc">${esc(n.ranks[rank - 1])}</div>` : "",
+      rank < max ? `${rank > 0 ? `<div class="tt-tip-next">Next rank:</div>` : ""}<div class="tt-tip-desc">${esc(n.ranks[rank])}</div>` : "",
+      points < needPoints ? `<div class="tt-tip-req">Requires ${needPoints} points in ${esc(tree.spec)} Talents</div>` : "",
+      prereq && !maxed(prereq) ? `<div class="tt-tip-req">Requires ${prereq.ranks.length} point${prereq.ranks.length > 1 ? "s" : ""} in ${esc(prereq.name)}</div>` : "",
+    ].join("");
+    return `<div class="tt-node ${state}" tabindex="0" style="left:${n.col * TALENT_PITCH}px;top:${(n.row - 1) * TALENT_PITCH}px" aria-label="${esc(`${n.name} ${rank}/${max}`)}">
+      ${n.icon ? `<img src="${esc(n.icon)}" alt="" />` : ""}
+      <span class="tt-rank">${rank}/${max}</span>
+      <div class="tt-tip" role="tooltip">${tip}</div>
+    </div>`;
+  }).join("");
+
+  return `<div class="talent-tree"${tree.icon ? ` style="--tree-art:url('${esc(tree.icon)}')"` : ""}>
+    <div class="tt-head">${tree.icon ? `<img src="${esc(tree.icon)}" alt="" />` : ""}<span>${esc(tree.spec)}</span><b>${points}</b></div>
+    <div class="tt-grid" style="width:${3 * TALENT_PITCH + TALENT_ICON}px;height:${(tree.rows - 1) * TALENT_PITCH + TALENT_ICON}px" aria-label="${esc(`${tree.spec} ${className} talents`)}">${arrows}${nodes}</div>
+  </div>`;
+}
+
 function foreverSpecsSection(ch: ForeverCharacter): string {
-  if (!ch.builds) return `<section><h3>Talents</h3><p class="notice">Talents unavailable.</p>${foreverProfessions(ch)}</section>`;
-  // Active build first; with dual spec the other one follows.
+  if (!ch.builds) return `<section data-panel="forever-talents" class="wide talents" data-talents><h3>Talents</h3><p class="notice">Talents unavailable.</p></section>`;
+  // Active build first; with dual spec the other one can be picked.
   const builds = [...ch.builds].sort((a, b) => Number(b.active) - Number(a.active));
-  const body = builds.map((b) => {
-    const label = builds.length > 1 ? `<div class="legacy-exp">${b.active ? "Active build" : "Inactive build"}</div>` : "";
-    const trees = b.trees.length
-      ? b.trees.map((t) => `<div class="lockout"><div class="lockout-diff">${esc(t.name)} <strong>${t.points}</strong> points</div>
+  const build = builds[Math.min(talentBuild, builds.length - 1)];
+  const switcher = builds.length > 1
+    ? `<div class="spec-tabs" role="group" aria-label="Talent build">${builds.map((b, i) => `<button type="button" data-talent-build="${i}" aria-pressed="${b === build}">${b.active ? "Active build" : "Inactive build"}</button>`).join("")}</div>`
+    : "";
+  const pointsIn = (spec: string) => build?.trees.find((t) => t.name === spec)?.points ?? 0;
+  const specs = ch.talentTrees?.map((t) => t.spec) ?? build?.trees.map((t) => t.name) ?? [];
+  const head = `<h3>Talents <span>${specs.map(pointsIn).join(" / ")}</span></h3>`;
+
+  if (!ch.talentTrees?.length) {
+    // No layout from the API: list the talents taken instead.
+    const list = build?.trees.length
+      ? build.trees.map((t) => `<div class="lockout"><div class="lockout-diff">${esc(t.name)} <strong>${t.points}</strong> points</div>
           <div class="chips">${t.talents.map((x) => `<span class="chip">${esc(x.name)} ${x.rank}</span>`).join("")}</div></div>`).join("")
       : `<p class="notice">No talent points spent.</p>`;
-    return label + trees;
-  }).join("");
-  return `<section><h3>Talents ${builds[0]?.trees.length ? `<span>${builds[0].trees.map((t) => t.points).join(" / ")}</span>` : ""}</h3>${body || `<p class="notice">No talent builds.</p>`}${foreverProfessions(ch)}</section>`;
+    return `<section data-panel="forever-talents" class="wide talents" data-talents>${head}${switcher}${list}</section>`;
+  }
+  const spent = new Map((build?.trees ?? []).flatMap((t) => t.talents.map((x) => [x.id, x.rank] as const)));
+  return `<section data-panel="forever-talents" class="wide talents" data-talents>${head}${switcher}
+    <div class="talent-frame">${ch.talentTrees.map((t) => talentTree(t, spent, pointsIn(t.spec), ch.className ?? "")).join("")}</div>
+  </section>`;
 }
 
 /** A 0–100% bar with a label on the left and the numbers on the right. */
@@ -361,7 +433,7 @@ const meter = (label: string, value: number, max: number, right: string, color =
 
 function foreverStatsSection(ch: ForeverCharacter): string {
   const s = ch.stats;
-  if (!s) return `<section><h3>Stats</h3><p class="notice">Stats unavailable.</p></section>`;
+  if (!s) return `<section data-panel="forever-stats"><h3>Stats</h3><p class="notice">Stats unavailable.</p></section>`;
   const pct = (n: number) => `${n.toFixed(1)}%`;
   const cells: [string, string | null][] = [
     ["Health", s.health.toLocaleString()], [s.powerType, s.power.toLocaleString()],
@@ -374,26 +446,25 @@ function foreverStatsSection(ch: ForeverCharacter): string {
     ["Dodge", pct(s.dodge)], ["Parry", s.parry ? pct(s.parry) : null],
     ["Block", s.block ? pct(s.block) : null], ["Main hand DPS", s.mainHandDps ? s.mainHandDps.toFixed(1) : null],
   ];
-  return `<section><h3>Stats</h3><div class="stat-grid">${cells
+  return `<section data-panel="forever-stats"><h3>Stats</h3><div class="stat-grid">${cells
     .filter((c): c is [string, string] => c[1] != null)
     .map(([k, v]) => `<div><span class="muted">${esc(k)}</span><strong>${esc(v)}</strong></div>`).join("")}</div></section>`;
 }
 
 function foreverQuestsSection(ch: ForeverCharacter): string {
   const q = ch.quests;
-  if (!q) return `<section><h3>Quest log</h3><p class="notice">Quests unavailable.</p></section>`;
-  return `<section><h3>Quest log <span>${q.inProgress.length} active${q.completed != null ? ` · ${q.completed.toLocaleString()} done` : ""}</span></h3>
+  if (!q) return `<section data-panel="forever-quests"><h3>Quest log</h3><p class="notice">Quests unavailable.</p></section>`;
+  return `<section data-panel="forever-quests"><h3>Quest log <span>${q.inProgress.length} active${q.completed != null ? ` · ${q.completed.toLocaleString()} done` : ""}</span></h3>
     ${q.inProgress.length ? `<ul class="quest-list">${q.inProgress.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>` : `<p class="notice">No quests in progress.</p>`}
   </section>`;
 }
 
-/** Professions, as the second half of the talents cell. */
-function foreverProfessions(ch: ForeverCharacter): string {
+function foreverProfessionsSection(ch: ForeverCharacter): string {
   const p = ch.professions;
   const body = !p ? `<p class="notice">Professions unavailable.</p>`
     : !p.length ? `<p class="notice">No professions learned.</p>`
     : p.map((x) => meter(`${esc(x.name)}${x.secondary ? ` <span class="muted small">secondary</span>` : ""}`, x.skill, x.max, `${x.skill}/${x.max} · ${x.recipes} recipes`)).join("");
-  return `<h3 class="follow">Professions</h3>${body}`;
+  return `<section data-panel="forever-professions"><h3>Professions</h3>${body}</section>`;
 }
 
 // Classic reputation colours, Hated (0) to Exalted (7).
@@ -401,8 +472,8 @@ const STANDING_COLORS = ["#cc2222", "#ff4422", "#ee6622", "#e6c34a", "#2fbf71", 
 
 function foreverReputationsSection(ch: ForeverCharacter): string {
   const r = ch.reputations;
-  if (!r) return `<section><h3>Reputations</h3><p class="notice">Reputations unavailable.</p></section>`;
-  return `<section><h3>Reputations <span>${r.length}</span></h3>${r.map((x) =>
+  if (!r) return `<section data-panel="forever-reputations"><h3>Reputations</h3><p class="notice">Reputations unavailable.</p></section>`;
+  return `<section data-panel="forever-reputations"><h3>Reputations <span>${r.length}</span></h3>${r.map((x) =>
     meter(esc(x.faction), x.value, x.max, `${esc(x.standing)} ${x.max ? `${x.value.toLocaleString()}/${x.max.toLocaleString()}` : ""}`, STANDING_COLORS[x.tier] ?? "var(--muted)")).join("")}</section>`;
 }
 
@@ -411,7 +482,7 @@ function foreverProgressSection(ch: ForeverCharacter): string {
   const dungeons = ch.lifetime?.find((c) => c.category === "Dungeons & Raids")?.stats ?? [];
   const a = ch.achievements;
   const line = (k: string, v: string) => `<tr><td>${k}</td><td class="num">${v}</td></tr>`;
-  return `<section><h3>Dungeons &amp; progress</h3>
+  return `<section data-panel="forever-progress"><h3>Dungeons &amp; progress</h3>
     ${dungeons.length ? `<table>${dungeons.map((d) => line(esc(d.name), esc(d.value))).join("")}</table>` : `<p class="notice">No dungeon kills yet.</p>`}
     <table class="progress">
       ${a ? line("Achievements", `${a.count} · ${a.points} pts`) : ""}
@@ -425,7 +496,7 @@ function foreverProgressSection(ch: ForeverCharacter): string {
 function foreverLifetimeSection(ch: ForeverCharacter): string {
   const cats = (ch.lifetime ?? []).filter((c) => c.category !== "Dungeons & Raids");
   if (!cats.length) return "";
-  return `<section class="wide"><h3>Lifetime statistics</h3><div class="lifetime">${cats.map((c) =>
+  return `<section data-panel="forever-lifetime" class="wide"><h3>Lifetime statistics</h3><div class="lifetime">${cats.map((c) =>
     `<div><div class="legacy-exp">${esc(c.category)}</div><table>${c.stats.map((st) => `<tr><td>${esc(st.name)}</td><td class="num">${esc(st.value)}</td></tr>`).join("")}</table></div>`).join("")}</div></section>`;
 }
 
@@ -438,9 +509,9 @@ function foreverRulesets(r: SourceResult<ForeverRuleset[]>): string {
 
 // The Forever card has two views: everything at a glance, or what the professions earn. Kept in browser storage.
 const FOREVER_VIEW_KEY = "wow-dashboard:forever-view";
-type ForeverView = "overview" | "professions" | "legacy";
-const FOREVER_VIEWS: Record<ForeverView, string> = { overview: "Overview", professions: "Professions", legacy: "Legacy" };
-const asView = (v: unknown): ForeverView => (v === "professions" || v === "legacy" ? v : "overview");
+type ForeverView = "overview" | "quests" | "professions" | "legacy";
+const FOREVER_VIEWS: Record<ForeverView, string> = { overview: "Overview", quests: "Quests", professions: "Professions", legacy: "Legacy" };
+const asView = (v: unknown): ForeverView => (v === "quests" || v === "professions" || v === "legacy" ? v : "overview");
 let foreverView: ForeverView = asView(readStorage<string>(FOREVER_VIEW_KEY, "overview"));
 let currentForever: ForeverStatus | null = null;
 
@@ -623,6 +694,80 @@ async function loadLegacyPage(refresh = false) {
   }
 }
 
+// Quests view: this character's quest log, optionally compared with another saved Forever character.
+// Who each character is compared with is kept in browser storage.
+const QUEST_COMPARE_KEY = "wow-dashboard:quest-compare";
+const WOWHEAD_QUEST = (id: number) => `${WOWHEAD}/quest=${id}`;
+
+const compareTarget = (key: string): string | null => {
+  const other = readStorage<Record<string, string>>(QUEST_COMPARE_KEY, {})[key];
+  return other && characters.includes(other) && other !== key ? other : null;
+};
+
+function questCompareBar(): string {
+  const others = characters.filter((k) => isForever(k) && k !== selected);
+  const current = selected ? compareTarget(selected) : null;
+  const options = others.map((k) => `<option value="${esc(k)}" ${k === current ? "selected" : ""}>${esc(k.split("/")[2].replace("-", " "))} (${esc(k.split("/")[1].toUpperCase())})</option>`).join("");
+  return `<div class="quest-compare-bar">
+    <label>Compare with <select data-quest-compare><option value="">Nobody, just my quests</option>${options}</select></label>
+    ${others.length ? "" : `<span class="muted small">Add another WoW: Forever character at the top to compare with.</span>`}
+  </div>`;
+}
+
+function questTable(quests: QuestInfo[], empty: string): string {
+  if (!quests.length) return `<p class="notice">${esc(empty)}</p>`;
+  return `<table class="quests">
+    <tr><th>Quest</th><th>Area</th><th>Type</th><th class="num">XP</th><th class="num">Level</th></tr>
+    ${quests.map((q) => `<tr>
+      <td>${esc(q.name)}</td><td class="muted">${esc(q.area ?? "—")}</td>
+      <td>${q.type ? `<span class="quest-type ${esc(q.type.toLowerCase())}">${esc(q.type)}</span>` : ""}</td>
+      <td class="num">${q.xp != null ? q.xp.toLocaleString() : "—"}</td>
+      <td class="num"><a class="source-link" href="${esc(WOWHEAD_QUEST(q.id))}" target="_blank" rel="noopener" title="Quest level and details on Wowhead (Blizzard's API doesn't give quest levels)">Wowhead ↗</a></td>
+    </tr>`).join("")}
+  </table>`;
+}
+
+/** Completed-quest differences are long, so they start closed. */
+const questDetails = (title: string, quests: QuestInfo[], empty: string) =>
+  `<details class="quest-details"><summary>${esc(title)} <span class="muted">(${quests.length})</span></summary>${questTable(quests, empty)}</details>`;
+
+function questsView(d: ForeverQuestCompare): string {
+  const me = d.me.name, them = d.other?.name;
+  if (!d.other) {
+    return `<div class="grid"><section class="wide"><h3>${esc(me)}'s quest log <span>${d.inProgress.onlyMe.length} in progress · ${d.completed.both.toLocaleString()} completed</span></h3>
+      ${questTable(d.inProgress.onlyMe, "No quests in progress.")}</section></div>`;
+  }
+  return `<div class="grid">
+    <section class="wide"><h3>In both quest logs <span>${d.inProgress.shared.length} shared</span></h3>
+      ${questTable(d.inProgress.shared, `No quests in common. ${me} and ${them} have nothing to do together right now.`)}</section>
+    <div class="quest-pair">
+      <section><h3>Only ${esc(me)} <span>level ${d.me.level} · ${d.inProgress.onlyMe.length}</span></h3>${questTable(d.inProgress.onlyMe, "Nothing else in the log.")}</section>
+      <section><h3>Only ${esc(them!)} <span>level ${d.other.level} · ${d.inProgress.onlyOther.length}</span></h3>${questTable(d.inProgress.onlyOther, "Nothing else in the log.")}</section>
+    </div>
+    <section class="wide"><h3>Completed <span>${d.completed.both.toLocaleString()} by both</span></h3>
+      ${questDetails(`Done by ${me}, not by ${them}`, d.completed.onlyMe, "None.")}
+      ${questDetails(`Done by ${them}, not by ${me}`, d.completed.onlyOther, "None.")}</section>
+  </div>`;
+}
+
+async function loadQuestsPage() {
+  const key = selected;
+  const body = document.querySelector<HTMLElement>(".quests-body");
+  if (!key || !body || !isForever(key)) return;
+  const other = compareTarget(key);
+  const toParam = (k: string) => k.split("/").slice(1).join("/");
+  body.innerHTML = `<p class="loading">Loading quests${other ? ` for both characters` : ""}…</p>`;
+  try {
+    const res = await fetch(`/api/forever/quests?c=${encodeURIComponent(toParam(key))}${other ? `&with=${encodeURIComponent(toParam(other))}` : ""}`);
+    if (!res.ok) throw new Error(await res.text());
+    const data = (await res.json()) as SourceResult<ForeverQuestCompare>;
+    if (selected !== key || foreverView !== "quests" || compareTarget(key) !== other || !body.isConnected) return;
+    body.innerHTML = data.status === "ok" ? questsView(data.data) : `<section>${sourceNotice(data) ?? ""}</section>`;
+  } catch (err) {
+    if (body.isConnected) body.innerHTML = `<p class="notice err">${esc(err instanceof Error ? err.message : err)}</p>`;
+  }
+}
+
 function foreverCard(f: ForeverStatus): string {
   const ch = f.character.status === "ok" ? f.character.data : null;
   const color = (ch?.className && CLASS_COLORS[ch.className]) ?? "var(--accent)";
@@ -648,10 +793,10 @@ function foreverCard(f: ForeverStatus): string {
     </div>
   </div>`;
 
-  // Everything shows at once: Forever tabs have no panel toggles.
+  // Sections start closed; the row of panel buttons above them opens the ones you want (see setupPanels).
   const panels = ch
-    ? [foreverGearSection(ch), foreverStatsSection(ch), foreverQuestsSection(ch), foreverSpecsSection(ch),
-       foreverReputationsSection(ch), foreverProgressSection(ch), foreverLifetimeSection(ch)].join("")
+    ? [foreverGearSection(ch), foreverStatsSection(ch), foreverQuestsSection(ch), foreverProfessionsSection(ch),
+       foreverReputationsSection(ch), foreverProgressSection(ch), foreverSpecsSection(ch), foreverLifetimeSection(ch)].join("")
     : "";
   const views = ch
     ? `<div class="panel-bar" role="group" aria-label="View">${(Object.keys(FOREVER_VIEWS) as ForeverView[]).map((v) =>
@@ -660,6 +805,7 @@ function foreverCard(f: ForeverStatus): string {
   const body = !ch ? `<section>${sourceNotice(f.character)}</section>`
     : foreverView === "professions" ? `<div class="professions-page"><p class="loading">Loading recipes… the first load takes about 20 seconds.</p></div>`
     : foreverView === "legacy" ? `<div class="legacy-page"><p class="loading">Loading Legacy challenges…</p></div>`
+    : foreverView === "quests" ? `<div class="quests-page">${questCompareBar()}<div class="quests-body"><p class="loading">Loading quests…</p></div></div>`
     : `<div class="grid overview">${panels}</div>`;
 
   return `<article class="card" style="--class:${color}">${hero}${views}${body}
@@ -768,6 +914,14 @@ const PANEL_LABELS: Record<string, string> = {
   logs: "Warcraft Logs",
   gear: "Gear",
   stats: "Stats",
+  "forever-gear": "Gear",
+  "forever-stats": "Stats",
+  "forever-quests": "Quest log",
+  "forever-professions": "Professions",
+  "forever-reputations": "Reputations",
+  "forever-progress": "Dungeons & progress",
+  "forever-talents": "Talents",
+  "forever-lifetime": "Lifetime statistics",
 };
 
 /** Adds the panel toggle row above the grid and hides every panel the viewer hasn't turned on. */
@@ -833,8 +987,10 @@ async function load(refresh = false) {
       current = null; // spec buttons only exist on retail cards
       currentForever = data;
       root.innerHTML = foreverCard(data);
+      if (foreverView === "overview") setupPanels(root);
       if (foreverView === "professions") loadProfessionsPage(refresh);
       if (foreverView === "legacy") loadLegacyPage(refresh);
+      if (foreverView === "quests") loadQuestsPage();
       document.getElementById("updated")!.textContent = `Updated ${new Date(data.fetchedAt).toLocaleTimeString()}`;
       return;
     }
@@ -952,9 +1108,12 @@ document.getElementById("root")!.addEventListener("click", (e) => {
   if (!button || !currentForever) return;
   foreverView = asView(button.dataset.foreverView);
   writeStorage(FOREVER_VIEW_KEY, foreverView);
-  document.getElementById("root")!.innerHTML = foreverCard(currentForever);
+  const root = document.getElementById("root")!;
+  root.innerHTML = foreverCard(currentForever);
+  if (foreverView === "overview") setupPanels(root);
   if (foreverView === "professions") loadProfessionsPage();
   if (foreverView === "legacy") loadLegacyPage();
+  if (foreverView === "quests") loadQuestsPage();
 });
 
 document.getElementById("root")!.addEventListener("click", (e) => {
@@ -963,6 +1122,24 @@ document.getElementById("root")!.addEventListener("click", (e) => {
   if (!button || !currentLegacy || !page) return;
   legacyCategory = button.dataset.legacyCategory!;
   page.innerHTML = legacyFrame(currentLegacy);
+});
+
+document.getElementById("root")!.addEventListener("click", (e) => {
+  const button = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-talent-build]");
+  const section = document.querySelector<HTMLElement>("section[data-talents]");
+  if (!button || !section || currentForever?.character.status !== "ok") return;
+  talentBuild = Number(button.dataset.talentBuild);
+  section.outerHTML = foreverSpecsSection(currentForever.character.data);
+});
+
+document.getElementById("root")!.addEventListener("change", (e) => {
+  const select = (e.target as HTMLElement).closest<HTMLSelectElement>("select[data-quest-compare]");
+  if (!select || !selected) return;
+  const all = readStorage<Record<string, string>>(QUEST_COMPARE_KEY, {});
+  if (select.value) all[selected] = select.value;
+  else delete all[selected];
+  writeStorage(QUEST_COMPARE_KEY, all);
+  loadQuestsPage();
 });
 
 // Missing recipes: the filter box, category and "learn now" box hide rows in their own profession.

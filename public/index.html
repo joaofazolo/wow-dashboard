@@ -169,6 +169,60 @@
     .scroll table th { position: sticky; top: 0; background: var(--panel-2); }
     table.missing tr[hidden] { display: none; }
 
+    .quest-compare-bar { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 12px 20px; font-size: 13px; }
+    .quest-compare-bar select { margin-left: 6px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font: inherit; }
+    .quests-body .grid { border-top: 1px solid var(--border); }
+    .quest-pair { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 1px; }
+    table.quests { font-size: 13px; }
+    .quest-type { font-size: 11px; border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; color: var(--muted); white-space: nowrap; }
+    .quest-type.dungeon { color: #3fc7eb; border-color: rgba(63, 199, 235, .5); }
+    .quest-type.elite { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+    .quest-type.raid { color: #ff8000; border-color: rgba(255, 128, 0, .5); }
+    .quest-details { margin-top: 8px; }
+    .quest-details summary { cursor: pointer; padding: 4px 0; }
+    .quest-details table { margin-top: 6px; }
+
+    /* Talents: modelled on the in-game talent frame (gold border when maxed, green while it can take points, grey when locked). */
+    section.talents .spec-tabs { margin-bottom: 12px; }
+    .talent-frame { display: flex; flex-wrap: wrap; justify-content: center; gap: 14px; }
+    .talent-tree { position: relative; padding: 0 16px 16px; border: 1px solid #4a3a24; border-radius: 6px; overflow: hidden;
+      background: linear-gradient(rgba(12, 9, 6, .86), rgba(12, 9, 6, .94)), var(--tree-art, none) center / cover, #120e0a; box-shadow: inset 0 0 30px #000; }
+    .tt-head { display: flex; align-items: center; gap: 8px; margin: 0 -16px 14px; padding: 8px 12px; background: linear-gradient(#3a2c1b, #221a11); border-bottom: 1px solid #6b5326;
+      font-family: "Friz Quadrata TT", "Friz Quadrata", Georgia, serif; color: #ffd100; text-shadow: 0 1px 2px #000; }
+    .tt-head img { width: 22px; height: 22px; border-radius: 3px; border: 1px solid #000; }
+    .tt-head b { margin-left: auto; font-weight: normal; color: #fff; }
+    .tt-grid { position: relative; margin: 0 auto; }
+    .tt-node { position: absolute; width: 38px; height: 38px; border-radius: 4px; outline: none; }
+    .tt-node img { display: block; width: 100%; height: 100%; border-radius: 4px; border: 2px solid #1eff00; box-shadow: 0 0 0 1px #000; }
+    .tt-node.maxed img { border-color: #ffd100; }
+    .tt-node.locked img { border-color: #4a4a4a; filter: grayscale(1) brightness(.6); }
+    .tt-node.open img { filter: brightness(.85); }
+    .tt-rank { position: absolute; right: -8px; bottom: -7px; min-width: 22px; padding: 0 3px; border-radius: 3px; background: #000; border: 1px solid #333;
+      font: bold 10px/14px system-ui, sans-serif; text-align: center; color: #1eff00; }
+    .tt-node.maxed .tt-rank { color: #ffd100; }
+    .tt-node.locked .tt-rank { color: #8a8a8a; }
+    .tt-arrow { position: absolute; background: #5a5a5a; }
+    .tt-arrow.lit { background: #ffd100; }
+    .tt-arrow.down, .tt-arrow.flat, .tt-arrow.left, .tt-arrow.right { width: 6px; }
+    .tt-arrow.flat, .tt-arrow.left, .tt-arrow.right { width: auto; height: 6px; }
+    .tt-arrow.down::after { content: ""; position: absolute; left: -4px; bottom: -7px; border: 7px solid transparent; border-bottom: 0; border-top-color: #5a5a5a; }
+    .tt-arrow.lit.down::after { border-top-color: #ffd100; }
+    .tt-arrow.right::after { content: ""; position: absolute; right: -7px; top: -4px; border: 7px solid transparent; border-right: 0; border-left-color: #5a5a5a; }
+    .tt-arrow.left::after { content: ""; position: absolute; left: -7px; top: -4px; border: 7px solid transparent; border-left: 0; border-right-color: #5a5a5a; }
+    .tt-arrow.lit.right::after { border-left-color: #ffd100; }
+    .tt-arrow.lit.left::after { border-right-color: #ffd100; }
+    /* The tooltip looks like the game's: dark blue panel, white name, yellow effect text, red requirements. */
+    .tt-tip { display: none; position: absolute; z-index: 5; left: 46px; top: -4px; width: 260px; padding: 8px 10px; border-radius: 4px;
+      background: rgba(4, 6, 22, .96); border: 1px solid #8a8f9c; box-shadow: 0 4px 14px rgba(0, 0, 0, .6); font-size: 12px; line-height: 1.4; color: #fff; pointer-events: none; }
+    .tt-node:hover .tt-tip, .tt-node:focus .tt-tip { display: block; }
+    .tt-node:hover, .tt-node:focus { z-index: 6; }
+    .talent-tree:last-child .tt-node[style*="left:162px"] .tt-tip, .talent-tree:last-child .tt-node[style*="left:108px"] .tt-tip { left: auto; right: 46px; }
+    .tt-tip-name { font-size: 14px; margin-bottom: 2px; }
+    .tt-tip-desc { color: #ffd100; margin-top: 4px; }
+    .tt-tip-next { margin-top: 8px; }
+    .tt-tip-req { color: #ff2020; margin-top: 6px; }
+    .talent-tree:has(.tt-node:hover), .talent-tree:has(.tt-node:focus) { overflow: visible; z-index: 2; }
+
     /* Legacy page: modelled on the in-game achievement frame (stone frame, gold trim, shield points, green status bars). */
     .legacy-page { padding: 16px; }
     .legacy-frame { --gold: #ffd100; --trim: #8a6a2c; --trim-hi: #c9a54a; font-family: "Friz Quadrata TT", "Friz Quadrata", Georgia, "Times New Roman", serif;

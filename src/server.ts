@@ -2,13 +2,14 @@ import { createServer, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
-import type { CharacterClass, CharacterRef, CharacterStatus, ForeverLegacy, ForeverProfessions, ForeverStatus, SourceResult } from "./types.js";
+import type { CharacterClass, CharacterRef, CharacterStatus, ForeverLegacy, ForeverProfessions, ForeverQuestCompare, ForeverStatus, SourceResult } from "./types.js";
 import { fetchRaiderIO } from "./sources/raiderio.js";
 import { blizzardEnabled, fetchBlizzard, realmNames } from "./sources/blizzard.js";
 import { fetchWarcraftLogs, warcraftLogsEnabled } from "./sources/warcraftlogs.js";
 import { fetchForeverCharacter, fetchForeverRulesets } from "./sources/forever.js";
 import { fetchForeverProfessions } from "./sources/foreverProfessions.js";
 import { fetchForeverLegacy } from "./sources/foreverLegacy.js";
+import { fetchForeverQuestCompare } from "./sources/foreverQuests.js";
 import { errorMessage } from "./sources/http.js";
 import { sampleBlizzard, sampleWarcraftLogs } from "./sources/placeholder.js";
 
@@ -141,6 +142,20 @@ const server = createServer(async (req, res) => {
       const region = (url.searchParams.get("region") ?? "").toLowerCase();
       if (!REGIONS.has(region)) return send(res, 400, "text/plain", "Expected region: us, eu, kr or tw");
       return send(res, 200, "application/json", JSON.stringify(await realmNames(region).catch(() => [])));
+    }
+    if (url.pathname === "/api/forever/quests") {
+      // ?c=region/Name-Surname, and optionally &with=region/Name-Surname to compare against.
+      const parse = (v: string | null) => {
+        const [region, name, ...rest] = (v ?? "").split("/").map((p) => p.trim());
+        return REGIONS.has(region?.toLowerCase()) && name?.includes("-") && !rest.length ? { region: region.toLowerCase(), name } : null;
+      };
+      const me = parse(url.searchParams.get("c"));
+      const other = url.searchParams.has("with") ? parse(url.searchParams.get("with")) : null;
+      if (!me || (url.searchParams.has("with") && !other)) {
+        return send(res, 400, "text/plain", "Expected region/Name-Surname, e.g. us/Thrall-Stormborn (region: us, eu, kr or tw)");
+      }
+      const result = await settle<ForeverQuestCompare>(blizzardEnabled, "Set BLIZZARD_CLIENT_ID / BLIZZARD_CLIENT_SECRET in .env", () => fetchForeverQuestCompare(me.region, me.name, other));
+      return send(res, 200, "application/json", JSON.stringify(result));
     }
     if (url.pathname === "/api/forever/legacy") {
       const [region, name, ...rest] = (url.searchParams.get("c") ?? "").split("/").map((p) => p.trim());
