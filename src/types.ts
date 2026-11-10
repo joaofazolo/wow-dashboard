@@ -171,6 +171,117 @@ export interface WarcraftLogsSpecRankings {
   encounters: { name: string; bestPercent: number | null; medianPercent: number | null; kills: number; spec: string | null }[];
 }
 
+/** A WoW: Forever character. Forever has no realms: characters are looked up as Name-Surname per region. */
+export interface ForeverCharacter {
+  name: string;
+  level: number;
+  race: string | null;
+  className: string | null;
+  spec: string | null;
+  faction: string | null;
+  guild: string | null;
+  title: string | null;
+  equippedItemLevel: number | null;
+  achievementPoints: number | null;
+  lastLogin: string | null;
+  insetUrl: string | null;
+  /** Null when the endpoint failed; each section loads on its own. */
+  gear: { slot: string; name: string; itemLevel: number | null; quality: string | null }[] | null;
+  /** Talent builds (more than one with dual spec). Each lists its talent trees with points spent, most points first. */
+  builds: { active: boolean; trees: { name: string; points: number; talents: { name: string; rank: number }[] }[] }[] | null;
+  /** Classic PvP rank (0 = none). */
+  pvp: { honorLevel: number | null; honorableKills: number | null; rank: number | null; maps: { name: string; played: number; won: number; lost: number }[] } | null;
+  surname: string | null;
+  gender: string | null;
+  ruleset: string | null;
+  /** Experience into the current level. */
+  experience: number | null;
+  /** Full-body render, transparent background. */
+  renderUrl: string | null;
+  stats: {
+    health: number; power: number; powerType: string;
+    strength: number; agility: number; stamina: number; intellect: number; spirit: number | null;
+    armor: number; attackPower: number | null; rangedAttackPower: number | null; spellPower: number | null; defense: number | null;
+    /** Percentages. */
+    crit: number; spellCrit: number | null; dodge: number; parry: number; block: number;
+    mainHandDps: number | null;
+  } | null;
+  professions: { name: string; skill: number; max: number; recipes: number; secondary: boolean }[] | null;
+  quests: { inProgress: string[]; completed: number | null } | null;
+  /** Highest standing first. `tier` is 0 (Hated) to 7 (Exalted). */
+  reputations: { faction: string; standing: string; tier: number; value: number; max: number }[] | null;
+  achievements: { count: number; points: number; recent: { name: string; at: string }[] } | null;
+  /** Lifetime statistics by category, e.g. Kills → Total kills 2040. */
+  lifetime: { category: string; stats: { name: string; value: string }[] }[] | null;
+  transmogs: number | null;
+}
+
+/** Forever's rulesets (PvP, Normal, Roleplay…) replace realms; each has its own up/down status. */
+export interface ForeverRuleset {
+  id: number;
+  name: string;
+  status: string;
+  up: boolean;
+}
+
+/** One profession recipe. */
+export interface ProfessionRecipe {
+  id: number;
+  name: string;
+  category: string;
+  crafted: { id: number; name: string; quantity: number } | null;
+  reagents: { id: number; name: string; quantity: number }[];
+  /** Missing recipes only: the item that teaches it, if there is one, and the skill it needs. */
+  learnFrom: { itemId: number; name: string; skill: number | null } | null;
+}
+
+export interface ProfessionProgress {
+  name: string;
+  skill: number;
+  max: number;
+  secondary: boolean;
+  known: ProfessionRecipe[];
+  missing: ProfessionRecipe[];
+}
+
+export interface ForeverProfessions {
+  professions: ProfessionProgress[];
+}
+
+/** One Legacy Challenge (an account-wide achievement worth 1 Legacy Point). */
+export interface LegacyChallenge {
+  name: string;
+  description: string;
+  /** Top-level group as in game: Classes, Tradeskills, Dungeons, Raids, Player vs. Player, Adventure. */
+  category: string;
+  /** e.g. "Warrior" under Classes, "Ranks" under Player vs. Player. */
+  subcategory: string | null;
+  icon: string | null;
+  completedAt: string | null;
+  progress:
+    | { kind: "bar"; value: number; max: number; label: string }
+    | { kind: "steps"; steps: { label: string; done: boolean }[] }
+    | null;
+}
+
+export interface ForeverLegacy {
+  earned: number;
+  total: number;
+  /** Most points one character can spend in its Legacy trees. */
+  perCharacterCap: number;
+  /** Account-wide rewards for total points earned. */
+  rewards: { points: number; name: string; kind: string }[];
+  challenges: LegacyChallenge[];
+}
+
+export interface ForeverStatus {
+  region: string;
+  name: string;
+  fetchedAt: string;
+  character: SourceResult<ForeverCharacter>;
+  rulesets: SourceResult<ForeverRuleset[]>;
+}
+
 export interface CharacterStatus {
   ref: CharacterRef;
   fetchedAt: string;

@@ -8,7 +8,7 @@ cp .env.example .env   # optional, only needed for Blizzard / Warcraft Logs
 npm run dev            # http://localhost:3000
 ```
 
-Add characters with the box at the top (`region/realm/name`, e.g. `us/azralon/Masushaman`; realms can be typed as shown in game, like `us/Area 52/Name`). The list, the selected character and which panels are open are saved in your browser's local storage, so they're per browser. Panels start hidden; use the row of panel buttons under the character header to show the ones you want.
+Add characters with the form at the top: pick **Retail** (then region, server and name; the server box suggests the region's realms, and realms can be typed as shown in game, like `Area 52`) or **WoW: Forever** (then region, first name and surname). The list, the selected character and which panels are open are saved in your browser's local storage, so they're per browser. Panels start hidden; use the row of panel buttons under the character header to show the ones you want.
 
 ## Data sources
 
@@ -21,6 +21,14 @@ Add characters with the box at the top (`region/realm/name`, e.g. `us/azralon/Ma
 | [Raider.IO cutoff analysis](https://raider.io/mythic-plus/cutoffs) | No | The same percentiles within each spec, compared against the character's best spec |
 | [Raider.IO periods](https://raider.io/api/v1/periods) | No | Weekly reset times, used for the Great Vault panel |
 | [Raidbots static data](https://www.raidbots.com/static/data/live/bonuses.json) | No | Decodes each item's upgrade track (e.g. Myth 2/6) so the gear panel can mark upgrades and better drops |
+
+### WoW: Forever
+
+Add a WoW: Forever character by picking WoW: Forever in the form, then its region, first name and surname. Forever has no realms: names are unique per region, so no ruleset is needed, and servers are grouped into rulesets (PvP, Normal, Roleplay, RP-PvP). Its tab uses the same Blizzard key, through the `profile-forever-{region}` / `dynamic-forever-{region}` namespaces, and shows everything on one page with no panel toggles: character render, experience, gear, stats, quest log, talents, professions, reputations, dungeon boss kills, achievements, PvP, transmog count, lifetime statistics (kills, deaths, travel…) and each ruleset's server status. That's 13 Blizzard calls per character, cached for 5 minutes. Blizzard hasn't documented the Forever API yet ([what's known to work](https://us.forums.blizzard.com/en/blizzard/t/wow-forever-api-what-works-so-far-plus-a-ts-client/60334)); characters only appear once they reach level 10 and log out, and their portrait can take hours to show up. Raider.IO and Warcraft Logs don't cover Forever.
+
+The **Professions** view (button under the Forever header) shows each profession's skill, the recipes the character knows (what each makes and its materials) and the ones it's missing, with how to learn them: the "Plans:" / "Pattern:" / "Recipe:" item and the skill it needs, or "Trainer or other" when the API doesn't say. Missing recipes are sorted by the skill they need and can be filtered by name, by category or to the ones learnable now. Each one links to its [Wowhead WoW: Forever](https://www.wowhead.com/forever) page for where it comes from (vendor, drop or quest), since Blizzard's API doesn't say. Every recipe is fetched once per server run, so the first load takes about 20 seconds.
+
+The **Legacy** view tracks Legacy Points, styled after the in-game achievement frame. Each Legacy Challenge is an account-wide achievement whose reward is a Legacy Point, so it shows all 65 by category with what's done, progress bars (class level, profession skill, battleground reputation) and dungeon/raid checklists, plus the collection rewards at 15, 25, 40 and 55 points. Those reward thresholds aren't in the API and are hard-coded from the in-game panel. Which perks a character has spent its points on isn't in the API either.
 
 The Great Vault panel's dungeon row uses Raider.IO's runs since the weekly reset. Its raid row counts bosses whose last kill (from Blizzard's `/encounters/raids`) is after the reset, so it needs the Blizzard key. No public API exposes delves or world activities, so that row isn't tracked. The Raid lockouts panel uses the same kill times to show, per current raid and difficulty, which bosses are killed this week and which are left (full boss lists come from Raider.IO).
 

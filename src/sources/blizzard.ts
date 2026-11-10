@@ -13,28 +13,82 @@ const getToken =
 
 export const blizzardEnabled = getToken !== null;
 
-const realmIndexes = new Map<string, Promise<Map<string, string>>>();
+// Blizzard allows 100 requests a second (and 36,000 an hour) per client. Big first loads, like every recipe of a
+// profession, burst past that, so requests are spaced to stay well under it and 429s are retried after a pause.
+const MAX_PER_SECOND = 60;
+const RETRIES = 4;
+let recent: number[] = [];
+
+/** Waits until another request fits in the last second's budget. */
+async function throttle(): Promise<void> {
+  for (;;) {
+    const now = Date.now();
+    recent = recent.filter((t) => now - t < 1000);
+    if (recent.length < MAX_PER_SECOND) {
+      recent.push(now);
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 1000 - (now - recent[0]) + 5));
+  }
+}
+
+/**
+ * GETs a Blizzard API path (including its query string) with the app's token. Rate limits, server errors and
+ * timeouts are retried with a growing pause (1, 2, 4, 8 s); other errors, like a 404, fail straight away.
+ */
+export async function blizzardGet<T>(region: string, pathAndQuery: string): Promise<T> {
+  if (!getToken) throw new Error("Blizzard API is not configured");
+  for (let attempt = 0; ; attempt++) {
+    await throttle();
+    try {
+      return await getJson<T>(`https://${region}.api.blizzard.com${pathAndQuery}`, { headers: { Authorization: `Bearer ${await getToken()}` } });
+    } catch (err) {
+      const msg = errorMessage(err);
+      const retryable = /^(429|5\d\d) /.test(msg) || !/^\d{3} /.test(msg);
+      if (!retryable || attempt >= RETRIES) throw err;
+      await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt));
+    }
+  }
+}
+
+/** Like blizzardGet, but a 404 resolves to null (plenty of Forever items are missing from the API). */
+export async function blizzardGetOrNull<T>(region: string, pathAndQuery: string): Promise<T | null> {
+  try {
+    return await blizzardGet<T>(region, pathAndQuery);
+  } catch (err) {
+    if (errorMessage(err).startsWith("404")) return null;
+    throw err;
+  }
+}
+
+const realmLists = new Map<string, Promise<{ name: string; slug: string }[]>>();
+
+/** Every retail realm in a region, cached for the life of the server. */
+function realmList(region: string): Promise<{ name: string; slug: string }[]> {
+  let list = realmLists.get(region);
+  if (!list) {
+    list = blizzardGet<{ realms: { name: string; slug: string }[] }>(region, `/data/wow/realm/index?namespace=dynamic-${region}&locale=en_US`).then((d) => d.realms);
+    realmLists.set(region, list);
+    list.catch(() => realmLists.delete(region)); // retry next time
+  }
+  return list;
+}
+
+/** Realm names in a region, alphabetical, for the add-character form. Empty without a key. */
+export async function realmNames(region: string): Promise<string[]> {
+  if (!getToken) return [];
+  return (await realmList(region)).map((r) => r.name).sort((a, b) => a.localeCompare(b));
+}
 
 /**
  * Blizzard's slug for a realm however it was typed ("Area52", "Area 52" or "area-52" all give "area-52").
- * Uses the region's realm list, cached for the life of the server; falls back to the input without a key.
+ * Uses the region's realm list; falls back to the input without a key.
  */
 export async function realmSlug(region: string, realm: string): Promise<string> {
   if (!getToken) return realm;
   const squash = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
-  let index = realmIndexes.get(region);
-  if (!index) {
-    index = (async () => {
-      const data = await getJson<{ realms: { name: string; slug: string }[] }>(
-        `https://${region}.api.blizzard.com/data/wow/realm/index?namespace=dynamic-${region}&locale=en_US`,
-        { headers: { Authorization: `Bearer ${await getToken!()}` } },
-      );
-      return new Map(data.realms.flatMap((r) => [[squash(r.slug), r.slug], [squash(r.name), r.slug]]));
-    })();
-    realmIndexes.set(region, index);
-    index.catch(() => realmIndexes.delete(region)); // retry next time
-  }
-  return (await index.catch(() => null))?.get(squash(realm)) ?? realm;
+  const realms = await realmList(region).catch(() => null);
+  return realms?.find((r) => squash(r.slug) === squash(realm) || squash(r.name) === squash(realm))?.slug ?? realm;
 }
 
 interface Summary {

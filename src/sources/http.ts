@@ -30,3 +30,16 @@ export function clientCredentials(tokenUrl: string, clientId: string, clientSecr
 export function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
+
+/** Runs fn over items, at most `limit` at a time, keeping the order. */
+export async function pool<T, R>(items: T[], fn: (t: T) => Promise<R>, limit = 20): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]);
+    }
+  }));
+  return out;
+}

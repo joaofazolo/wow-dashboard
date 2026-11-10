@@ -1,4 +1,4 @@
-import type { BlizzardData, CharacterRef, CharacterStatus, GearItem, KeystoneRun, RaidDifficulty, RaiderIOData, SourceResult, WarcraftLogsData } from "../types.js";
+import type { BlizzardData, CharacterRef, CharacterStatus, ForeverCharacter, ForeverLegacy, LegacyChallenge, ForeverProfessions, ProfessionProgress, ProfessionRecipe,ForeverRuleset, ForeverStatus, GearItem,KeystoneRun, RaidDifficulty, RaiderIOData, SourceResult, WarcraftLogsData } from "../types.js";
 
 const CLASS_COLORS: Record<string, string> = {
   "Death Knight": "#C41E3A", "Demon Hunter": "#A330C9", Druid: "#FF7C0A", Evoker: "#33937F",
@@ -318,20 +318,376 @@ function card(c: CharacterStatus): string {
   </article>`;
 }
 
+// WoW: Forever characters are saved as "forever/region/Name-Surname" and get their own card.
+const FOREVER = "forever";
+const isForever = (key: string) => key.split("/")[0].toLowerCase() === FOREVER;
+
+// Blizzard's item quality types.
+const QUALITY_TYPE: Record<string, string> = {
+  POOR: QUALITY[0], COMMON: QUALITY[1], UNCOMMON: QUALITY[2], RARE: QUALITY[3], EPIC: QUALITY[4], LEGENDARY: QUALITY[5], ARTIFACT: "#e6cc80", HEIRLOOM: "#00ccff",
+};
+
+function foreverGearSection(ch: ForeverCharacter): string {
+  const head = `<h3>Gear ${ch.equippedItemLevel ? `<span>${ch.equippedItemLevel} ilvl</span>` : ""}</h3>`;
+  if (!ch.gear) return `<section>${head}<p class="notice">Equipment unavailable.</p></section>`;
+  return `<section>${head}<table class="gear">
+    ${ch.gear.map((g) => `<tr>
+      <td class="slot">${esc(g.slot)}</td>
+      <td class="name" style="color:${(g.quality && QUALITY_TYPE[g.quality]) ?? "inherit"}">${esc(g.name)}</td>
+      <td class="num">${g.itemLevel ?? "—"}</td>
+    </tr>`).join("")}
+  </table></section>`;
+}
+
+function foreverSpecsSection(ch: ForeverCharacter): string {
+  if (!ch.builds) return `<section><h3>Talents</h3><p class="notice">Talents unavailable.</p>${foreverProfessions(ch)}</section>`;
+  // Active build first; with dual spec the other one follows.
+  const builds = [...ch.builds].sort((a, b) => Number(b.active) - Number(a.active));
+  const body = builds.map((b) => {
+    const label = builds.length > 1 ? `<div class="legacy-exp">${b.active ? "Active build" : "Inactive build"}</div>` : "";
+    const trees = b.trees.length
+      ? b.trees.map((t) => `<div class="lockout"><div class="lockout-diff">${esc(t.name)} <strong>${t.points}</strong> points</div>
+          <div class="chips">${t.talents.map((x) => `<span class="chip">${esc(x.name)} ${x.rank}</span>`).join("")}</div></div>`).join("")
+      : `<p class="notice">No talent points spent.</p>`;
+    return label + trees;
+  }).join("");
+  return `<section><h3>Talents ${builds[0]?.trees.length ? `<span>${builds[0].trees.map((t) => t.points).join(" / ")}</span>` : ""}</h3>${body || `<p class="notice">No talent builds.</p>`}${foreverProfessions(ch)}</section>`;
+}
+
+/** A 0–100% bar with a label on the left and the numbers on the right. */
+const meter = (label: string, value: number, max: number, right: string, color = "var(--class, var(--accent))") =>
+  `<div class="meter"><div class="meter-label"><span>${label}</span><span class="muted">${right}</span></div>
+    <div class="bar"><span style="width:${max ? Math.min(100, (value / max) * 100) : 0}%;background:${color}"></span></div></div>`;
+
+function foreverStatsSection(ch: ForeverCharacter): string {
+  const s = ch.stats;
+  if (!s) return `<section><h3>Stats</h3><p class="notice">Stats unavailable.</p></section>`;
+  const pct = (n: number) => `${n.toFixed(1)}%`;
+  const cells: [string, string | null][] = [
+    ["Health", s.health.toLocaleString()], [s.powerType, s.power.toLocaleString()],
+    ["Strength", String(s.strength)], ["Agility", String(s.agility)],
+    ["Stamina", String(s.stamina)], ["Intellect", String(s.intellect)],
+    ["Spirit", s.spirit != null ? String(s.spirit) : null], ["Armor", s.armor.toLocaleString()],
+    ["Attack power", s.attackPower ? String(s.attackPower) : null], ["Ranged AP", s.rangedAttackPower ? String(s.rangedAttackPower) : null],
+    ["Spell power", s.spellPower ? String(s.spellPower) : null], ["Defense", s.defense ? String(s.defense) : null],
+    ["Crit", pct(s.crit)], ["Spell crit", s.spellCrit ? pct(s.spellCrit) : null],
+    ["Dodge", pct(s.dodge)], ["Parry", s.parry ? pct(s.parry) : null],
+    ["Block", s.block ? pct(s.block) : null], ["Main hand DPS", s.mainHandDps ? s.mainHandDps.toFixed(1) : null],
+  ];
+  return `<section><h3>Stats</h3><div class="stat-grid">${cells
+    .filter((c): c is [string, string] => c[1] != null)
+    .map(([k, v]) => `<div><span class="muted">${esc(k)}</span><strong>${esc(v)}</strong></div>`).join("")}</div></section>`;
+}
+
+function foreverQuestsSection(ch: ForeverCharacter): string {
+  const q = ch.quests;
+  if (!q) return `<section><h3>Quest log</h3><p class="notice">Quests unavailable.</p></section>`;
+  return `<section><h3>Quest log <span>${q.inProgress.length} active${q.completed != null ? ` · ${q.completed.toLocaleString()} done` : ""}</span></h3>
+    ${q.inProgress.length ? `<ul class="quest-list">${q.inProgress.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>` : `<p class="notice">No quests in progress.</p>`}
+  </section>`;
+}
+
+/** Professions, as the second half of the talents cell. */
+function foreverProfessions(ch: ForeverCharacter): string {
+  const p = ch.professions;
+  const body = !p ? `<p class="notice">Professions unavailable.</p>`
+    : !p.length ? `<p class="notice">No professions learned.</p>`
+    : p.map((x) => meter(`${esc(x.name)}${x.secondary ? ` <span class="muted small">secondary</span>` : ""}`, x.skill, x.max, `${x.skill}/${x.max} · ${x.recipes} recipes`)).join("");
+  return `<h3 class="follow">Professions</h3>${body}`;
+}
+
+// Classic reputation colours, Hated (0) to Exalted (7).
+const STANDING_COLORS = ["#cc2222", "#ff4422", "#ee6622", "#e6c34a", "#2fbf71", "#2fbf71", "#1fc9a8", "#1fc9d9"];
+
+function foreverReputationsSection(ch: ForeverCharacter): string {
+  const r = ch.reputations;
+  if (!r) return `<section><h3>Reputations</h3><p class="notice">Reputations unavailable.</p></section>`;
+  return `<section><h3>Reputations <span>${r.length}</span></h3>${r.map((x) =>
+    meter(esc(x.faction), x.value, x.max, `${esc(x.standing)} ${x.max ? `${x.value.toLocaleString()}/${x.max.toLocaleString()}` : ""}`, STANDING_COLORS[x.tier] ?? "var(--muted)")).join("")}</section>`;
+}
+
+/** Dungeon boss kills, achievements, PvP and collections: the small stuff, together. */
+function foreverProgressSection(ch: ForeverCharacter): string {
+  const dungeons = ch.lifetime?.find((c) => c.category === "Dungeons & Raids")?.stats ?? [];
+  const a = ch.achievements;
+  const line = (k: string, v: string) => `<tr><td>${k}</td><td class="num">${v}</td></tr>`;
+  return `<section><h3>Dungeons &amp; progress</h3>
+    ${dungeons.length ? `<table>${dungeons.map((d) => line(esc(d.name), esc(d.value))).join("")}</table>` : `<p class="notice">No dungeon kills yet.</p>`}
+    <table class="progress">
+      ${a ? line("Achievements", `${a.count} · ${a.points} pts`) : ""}
+      ${ch.pvp ? line("Honorable kills", (ch.pvp.honorableKills ?? 0).toLocaleString()) + line("PvP rank", String(ch.pvp.rank ?? "—")) : ""}
+      ${ch.transmogs != null ? line("Appearances collected", ch.transmogs.toLocaleString()) : ""}
+    </table>
+    ${a?.recent.length ? `<div class="chips">${a.recent.map((e) => `<span class="chip done" title="${esc(new Date(e.at).toLocaleString())}">✓ ${esc(e.name)}</span>`).join("")}</div>` : ""}
+  </section>`;
+}
+
+function foreverLifetimeSection(ch: ForeverCharacter): string {
+  const cats = (ch.lifetime ?? []).filter((c) => c.category !== "Dungeons & Raids");
+  if (!cats.length) return "";
+  return `<section class="wide"><h3>Lifetime statistics</h3><div class="lifetime">${cats.map((c) =>
+    `<div><div class="legacy-exp">${esc(c.category)}</div><table>${c.stats.map((st) => `<tr><td>${esc(st.name)}</td><td class="num">${esc(st.value)}</td></tr>`).join("")}</table></div>`).join("")}</div></section>`;
+}
+
+/** Server status of every ruleset, for the card's footer. */
+function foreverRulesets(r: SourceResult<ForeverRuleset[]>): string {
+  if (r.status !== "ok") return "";
+  return `<span class="rulesets" title="Forever has rulesets instead of realms">Rulesets: ${r.data
+    .map((rs) => `${esc(rs.name)} <span class="${rs.up ? "timed" : "depleted"}">● ${esc(rs.status)}</span>`).join(" · ")}</span>`;
+}
+
+// The Forever card has two views: everything at a glance, or what the professions earn. Kept in browser storage.
+const FOREVER_VIEW_KEY = "wow-dashboard:forever-view";
+type ForeverView = "overview" | "professions" | "legacy";
+const FOREVER_VIEWS: Record<ForeverView, string> = { overview: "Overview", professions: "Professions", legacy: "Legacy" };
+const asView = (v: unknown): ForeverView => (v === "professions" || v === "legacy" ? v : "overview");
+let foreverView: ForeverView = asView(readStorage<string>(FOREVER_VIEW_KEY, "overview"));
+let currentForever: ForeverStatus | null = null;
+
+// Blizzard's API doesn't say where recipes come from; Wowhead's WoW: Forever database does (vendors, drops, quests).
+const WOWHEAD = "https://www.wowhead.com/forever";
+
+/** Where to look up a missing recipe's source: the item that teaches it, else the item it makes (its page lists the recipe), else a search. */
+function wowheadUrl(r: ProfessionRecipe): string {
+  if (r.learnFrom) return `${WOWHEAD}/item=${r.learnFrom.itemId}`;
+  if (r.crafted) return `${WOWHEAD}/item=${r.crafted.id}`;
+  return `${WOWHEAD}/search?q=${encodeURIComponent(r.name)}`;
+}
+
+/** A recipe's materials, e.g. "6× Copper Bar, 1× Weak Flux". */
+const reagentList = (r: ProfessionRecipe) => r.reagents.map((x) => `${x.quantity}× ${x.name}`).join(", ");
+
+function professionSection(p: ProfessionProgress): string {
+  const knownRows = [...p.known].sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name)).map((r) => `<tr>
+      <td>${esc(r.name)}</td><td class="muted">${esc(r.category)}</td>
+      <td>${r.crafted ? `${esc(r.crafted.name)}${r.crafted.quantity > 1 ? ` <span class="muted small">×${r.crafted.quantity}</span>` : ""}` : `<span class="muted">—</span>`}</td>
+      <td class="muted small">${esc(reagentList(r))}</td>
+    </tr>`).join("");
+  const missingRows = p.missing.map((r) => {
+    const learn = r.learnFrom;
+    const canLearn = learn?.skill != null && learn.skill <= p.skill;
+    return `<tr data-name="${esc(r.name.toLowerCase())}" data-category="${esc(r.category)}" data-learnable="${canLearn}" title="${esc(reagentList(r))}">
+      <td>${esc(r.name)}</td><td class="muted">${esc(r.category)}</td>
+      <td>${learn ? esc(learn.name) : `<span class="muted">Trainer or other</span>`}
+        <a class="source-link" href="${esc(wowheadUrl(r))}" target="_blank" rel="noopener" title="Where it comes from (vendor, drop or quest) on Wowhead">source ↗</a></td>
+      <td class="num ${canLearn ? "up" : "muted"}">${learn?.skill ?? "—"}</td>
+    </tr>`;
+  }).join("");
+  const learnable = p.missing.filter((r) => r.learnFrom?.skill != null && r.learnFrom.skill <= p.skill).length;
+  const categories = new Map<string, number>();
+  for (const r of p.missing) categories.set(r.category, (categories.get(r.category) ?? 0) + 1);
+  const categoryOptions = [...categories].sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([c, n]) => `<option value="${esc(c)}">${esc(c)} (${n})</option>`).join("");
+
+  // Each profession starts closed; its header (name, skill and bar) opens it.
+  return `<section class="wide profession"><details>
+    <summary>
+      <h3><span class="prof-name">${esc(p.name)}${p.secondary ? " (secondary)" : ""}</span> <span>${p.skill}/${p.max} · ${p.known.length} known · ${p.missing.length} missing</span></h3>
+      <div class="bar"><span style="width:${p.max ? Math.min(100, (p.skill / p.max) * 100) : 0}%;background:var(--class, var(--accent))"></span></div>
+    </summary>
+    <h4>Your recipes</h4>
+    ${knownRows ? `<div class="scroll"><table class="recipes"><tr><th>Recipe</th><th>Category</th><th>Makes</th><th>Materials</th></tr>${knownRows}</table></div>` : `<p class="notice">No recipes known.</p>`}
+    <h4>Missing recipes</h4>
+    <div class="missing-controls">
+      <input type="search" placeholder="Filter recipes" data-missing-filter aria-label="Filter missing ${esc(p.name)} recipes" />
+      <select data-missing-category aria-label="Category of missing ${esc(p.name)} recipes"><option value="">All categories (${p.missing.length})</option>${categoryOptions}</select>
+      <label><input type="checkbox" data-missing-learnable /> Only ones I can learn now (${learnable})</label>
+    </div>
+    ${missingRows ? `<div class="scroll"><table class="recipes missing"><tr><th>Recipe</th><th>Category</th><th>Learn from</th><th class="num">Skill</th></tr>${missingRows}</table></div>` : `<p class="notice">You know every recipe.</p>`}
+  </details></section>`;
+}
+
+async function loadProfessionsPage(refresh = false) {
+  const key = selected;
+  const page = document.querySelector<HTMLElement>(".professions-page");
+  if (!key || !page || !isForever(key)) return;
+  const [, region, name] = key.split("/");
+  try {
+    const res = await fetch(`/api/forever/professions?c=${encodeURIComponent(`${region}/${name}`)}${refresh ? "&refresh" : ""}`);
+    if (!res.ok) throw new Error(await res.text());
+    const data = (await res.json()) as SourceResult<ForeverProfessions>;
+    if (selected !== key || foreverView !== "professions" || !page.isConnected) return;
+    if (data.status !== "ok") {
+      page.innerHTML = `<section>${sourceNotice(data) ?? ""}</section>`;
+      return;
+    }
+    page.innerHTML = `<div class="grid">${data.data.professions.map(professionSection).join("") || `<section><p class="notice">No professions learned.</p></section>`}</div>`;
+  } catch (err) {
+    if (page.isConnected) page.innerHTML = `<p class="notice err">${esc(err instanceof Error ? err.message : err)}</p>`;
+  }
+}
+
+// Legacy page, styled after the in-game achievement frame: categories down the left, challenge rows on the right.
+let currentLegacy: ForeverLegacy | null = null;
+let legacyCategory = "Summary";
+
+/** The in-game style status bar: dark track, green fill, the numbers centred on top. */
+const wowBar = (value: number, max: number, text = `${value.toLocaleString()} / ${max.toLocaleString()}`) =>
+  `<div class="wow-bar"><span style="width:${max ? Math.min(100, (value / max) * 100) : 0}%"></span><em>${esc(text)}</em></div>`;
+
+const legacyRatio = (c: LegacyChallenge) =>
+  c.completedAt ? 1
+  : c.progress?.kind === "bar" ? c.progress.value / (c.progress.max || 1)
+  : c.progress?.kind === "steps" ? c.progress.steps.filter((x) => x.done).length / (c.progress.steps.length || 1)
+  : 0;
+
+function legacyRow(c: LegacyChallenge): string {
+  const p = c.progress;
+  const body = c.completedAt ? ""
+    : p?.kind === "bar" ? wowBar(p.value, p.max)
+    : p?.kind === "steps" ? `<ul class="ach-steps">${p.steps.map((x) => `<li class="${x.done ? "done" : ""}">${x.done ? "✓ " : "– "}${esc(x.label)}</li>`).join("")}</ul>`
+    : "";
+  return `<div class="ach-row ${c.completedAt ? "done" : ""}">
+    ${c.icon ? `<img class="ach-icon" src="${esc(c.icon)}" alt="" loading="lazy" />` : `<div class="ach-icon"></div>`}
+    <div class="ach-text">
+      <div class="ach-name">${esc(c.name)}</div>
+      <div class="ach-desc">${esc(c.description)}</div>
+      ${body}
+    </div>
+    <div class="ach-side">
+      <div class="ach-shield" title="1 Legacy Point">1</div>
+      ${c.completedAt ? `<div class="ach-date">${new Date(c.completedAt).toLocaleDateString()}</div>` : ""}
+    </div>
+  </div>`;
+}
+
+function legacySummary(l: ForeverLegacy, categories: string[]): string {
+  const marks = l.rewards.map((r) => `<span class="reward-mark ${l.earned >= r.points ? "got" : ""}" style="left:${(r.points / l.total) * 100}%" title="${esc(`${r.points}: ${r.name} (${r.kind})`)}">${r.points}</span>`).join("");
+  const closest = l.challenges.filter((c) => !c.completedAt && legacyRatio(c) > 0).sort((a, b) => legacyRatio(b) - legacyRatio(a)).slice(0, 5);
+  const recent = l.challenges.filter((c) => c.completedAt).sort((a, b) => b.completedAt!.localeCompare(a.completedAt!)).slice(0, 3);
+  return `<h4 class="lf-heading">Legacy Points Earned</h4>
+    <div class="reward-track">${wowBar(l.earned, l.total)}<div class="reward-marks">${marks}</div></div>
+    <div class="reward-list">${l.rewards.map((r) => `<div class="reward ${l.earned >= r.points ? "got" : ""}">
+      <span class="reward-pts">${r.points}</span><span><strong>${esc(r.name)}</strong><span class="muted"> ${esc(r.kind)}</span></span>
+      <span class="reward-state">${l.earned >= r.points ? "Unlocked" : `${r.points - l.earned} to go`}</span></div>`).join("")}</div>
+    <p class="lf-note">Each character can spend up to ${l.perCharacterCap} of these points in its Legacy trees. Which perks a character picked isn't available from Blizzard's API.</p>
+    <h4 class="lf-heading">Progress Overview</h4>
+    <div class="lf-cat-bars">${categories.map((cat) => {
+      const list = l.challenges.filter((c) => c.category === cat);
+      return `<button type="button" class="lf-cat-bar" data-legacy-category="${esc(cat)}"><span>${esc(cat)}</span>${wowBar(list.filter((c) => c.completedAt).length, list.length)}</button>`;
+    }).join("")}</div>
+    ${closest.length ? `<h4 class="lf-heading">Closest to Completion</h4>${closest.map(legacyRow).join("")}` : ""}
+    ${recent.length ? `<h4 class="lf-heading">Recently Earned</h4>${recent.map(legacyRow).join("")}` : ""}`;
+}
+
+function legacyFrame(l: ForeverLegacy): string {
+  const categories = [...new Set(l.challenges.map((c) => c.category))];
+  if (legacyCategory !== "Summary" && !categories.includes(legacyCategory)) legacyCategory = "Summary";
+  const count = (cat: string) => {
+    const list = l.challenges.filter((c) => c.category === cat);
+    return `${list.filter((c) => c.completedAt).length}/${list.length}`;
+  };
+  const nav = ["Summary", ...categories].map((cat) =>
+    `<button type="button" data-legacy-category="${esc(cat)}" aria-pressed="${legacyCategory === cat}"><span>${esc(cat)}</span>${cat === "Summary" ? "" : `<small>${count(cat)}</small>`}</button>`).join("");
+
+  let content: string;
+  if (legacyCategory === "Summary") content = legacySummary(l, categories);
+  else {
+    // Grouped by subcategory as in game; the current character's class comes first.
+    const list = l.challenges.filter((c) => c.category === legacyCategory);
+    const ownClass = currentForever?.character.status === "ok" ? currentForever.character.data.className : null;
+    const groups = [...new Set(list.map((c) => c.subcategory ?? ""))].sort((a, b) => Number(b === ownClass) - Number(a === ownClass));
+    content = groups.map((g) => `${g ? `<h4 class="lf-heading">${esc(g)}</h4>` : ""}${list.filter((c) => (c.subcategory ?? "") === g).map(legacyRow).join("")}`).join("");
+  }
+
+  return `<div class="legacy-frame">
+    <div class="lf-header">
+      <div class="lf-title">Legacy</div>
+      <div class="lf-total"><span class="ach-shield big">${l.earned}</span><span>${l.earned} / ${l.total} Legacy Points</span></div>
+    </div>
+    <div class="lf-body">
+      <nav class="lf-cats" aria-label="Legacy categories">${nav}</nav>
+      <div class="lf-content">${content}</div>
+    </div>
+  </div>`;
+}
+
+async function loadLegacyPage(refresh = false) {
+  const key = selected;
+  const page = document.querySelector<HTMLElement>(".legacy-page");
+  if (!key || !page || !isForever(key)) return;
+  const [, region, name] = key.split("/");
+  try {
+    const res = await fetch(`/api/forever/legacy?c=${encodeURIComponent(`${region}/${name}`)}${refresh ? "&refresh" : ""}`);
+    if (!res.ok) throw new Error(await res.text());
+    const data = (await res.json()) as SourceResult<ForeverLegacy>;
+    if (selected !== key || foreverView !== "legacy" || !page.isConnected) return;
+    if (data.status !== "ok") {
+      page.innerHTML = `<section>${sourceNotice(data) ?? ""}</section>`;
+      return;
+    }
+    currentLegacy = data.data;
+    page.innerHTML = legacyFrame(data.data);
+  } catch (err) {
+    if (page.isConnected) page.innerHTML = `<p class="notice err">${esc(err instanceof Error ? err.message : err)}</p>`;
+  }
+}
+
+function foreverCard(f: ForeverStatus): string {
+  const ch = f.character.status === "ok" ? f.character.data : null;
+  const color = (ch?.className && CLASS_COLORS[ch.className]) ?? "var(--accent)";
+  const pill = (name: string, r: SourceResult<unknown>) =>
+    `<span class="pill ${r.status}" title="${esc(r.status === "error" ? r.error : r.status === "disabled" || r.status === "sample" ? r.reason : "ok")}">${name}</span>`;
+  const stat = (name: string) => ch?.lifetime?.flatMap((c) => c.stats).find((s) => s.name === name)?.value ?? null;
+
+  const hero = `<div class="hero forever"${ch?.renderUrl ? ` style="--render:url('${esc(ch.renderUrl)}')"` : ""}>
+    ${ch?.insetUrl ? `<img class="avatar" src="${esc(ch.insetUrl)}" alt="" onerror="this.style.visibility='hidden'" />` : ""}
+    <div>
+      <h2>${esc(ch ? [ch.name, ch.surname].filter(Boolean).join(" ") : f.name)}</h2>
+      ${ch?.title ? `<div>${esc(ch.title)}</div>` : ""}
+      <div class="sub">${ch ? [`Level ${ch.level}`, [ch.race, ch.spec, ch.className].filter(Boolean).map(esc).join(" ")].filter(Boolean).join(" · ") : ""}</div>
+      <div class="sub">${ch?.guild ? `&lt;${esc(ch.guild)}&gt; · ` : ""}WoW: Forever (${esc(f.region.toUpperCase())})${ch?.ruleset ? ` · ${esc(ch.ruleset)} ruleset` : ""}${ch?.faction ? ` · ${esc(ch.faction)}` : ""}</div>
+      <div class="sub">${ch?.experience != null ? `${ch.experience.toLocaleString()} XP into level ${ch.level}` : ""}${ch?.lastLogin ? ` · last login ${ago(ch.lastLogin)}` : ""}</div>
+    </div>
+    <div class="kpis">
+      ${ch?.equippedItemLevel ? kpi("Item level", String(ch.equippedItemLevel)) : ""}
+      ${ch?.stats ? kpi("Health", ch.stats.health.toLocaleString()) : ""}
+      ${stat("Total kills") ? kpi("Kills", stat("Total kills")!) : ""}
+      ${stat("Total deaths") ? kpi("Deaths", stat("Total deaths")!) : ""}
+      ${ch?.quests?.completed != null ? kpi("Quests done", ch.quests.completed.toLocaleString()) : ""}
+    </div>
+  </div>`;
+
+  // Everything shows at once: Forever tabs have no panel toggles.
+  const panels = ch
+    ? [foreverGearSection(ch), foreverStatsSection(ch), foreverQuestsSection(ch), foreverSpecsSection(ch),
+       foreverReputationsSection(ch), foreverProgressSection(ch), foreverLifetimeSection(ch)].join("")
+    : "";
+  const views = ch
+    ? `<div class="panel-bar" role="group" aria-label="View">${(Object.keys(FOREVER_VIEWS) as ForeverView[]).map((v) =>
+        `<button type="button" data-forever-view="${v}" aria-pressed="${foreverView === v}">${FOREVER_VIEWS[v]}</button>`).join("")}</div>`
+    : "";
+  const body = !ch ? `<section>${sourceNotice(f.character)}</section>`
+    : foreverView === "professions" ? `<div class="professions-page"><p class="loading">Loading recipes… the first load takes about 20 seconds.</p></div>`
+    : foreverView === "legacy" ? `<div class="legacy-page"><p class="loading">Loading Legacy challenges…</p></div>`
+    : `<div class="grid overview">${panels}</div>`;
+
+  return `<article class="card" style="--class:${color}">${hero}${views}${body}
+    <div class="sources">${pill("Blizzard (Forever)", f.character)}${foreverRulesets(f.rulesets)}</div>
+  </article>`;
+}
+
 // Everything the viewer chooses is kept in this browser's storage; nothing is configured on the server.
 const CHARACTERS_KEY = "wow-dashboard:characters";
 const SELECTED_KEY = "wow-dashboard:character";
 
 const tabs = document.getElementById("tabs")!;
 const addForm = document.getElementById("add") as HTMLFormElement;
-const addInput = document.getElementById("add-input") as HTMLInputElement;
+const addGame = document.getElementById("add-game") as HTMLSelectElement;
+const addRegion = document.getElementById("add-region") as HTMLSelectElement;
+const addRealm = document.getElementById("add-realm") as HTMLInputElement;
+const addRealms = document.getElementById("add-realms") as HTMLDataListElement;
+const addName = document.getElementById("add-name") as HTMLInputElement;
+const addSurname = document.getElementById("add-surname") as HTMLInputElement;
 const addStatus = document.getElementById("add-status")!;
 
 const refKey = (r: CharacterRef) => `${r.region}/${r.realm}/${r.name}`;
-const refLabel = (key: string) => {
-  const [region, realm, name] = key.split("/");
-  return `${name} – ${realm.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())} (${region.toUpperCase()})`;
+/** The tab's second line: the realm, or "WoW: Forever" plus the region. */
+const placeLabel = (key: string) => {
+  const [a, b] = key.split("/");
+  return isForever(key) ? `WoW: Forever · ${b.toUpperCase()}` : `${b.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())} · ${a.toUpperCase()}`;
 };
+const refLabel = (key: string) => `${key.split("/")[2]} – ${placeLabel(key)}`;
 const sameRef = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 
 function readStorage<T>(key: string, fallback: T): T {
@@ -359,12 +715,12 @@ const tabColors = new Map<string, string>();
 
 function renderTabs() {
   tabs.replaceChildren(...characters.map((key) => {
-    const [region, realm, name] = key.split("/");
+    const name = key.split("/")[2];
     const tab = document.createElement("div");
     tab.className = `tab${key === selected ? " active" : ""}`;
     const color = tabColors.get(key);
     if (color) tab.style.setProperty("--tab-color", color);
-    tab.innerHTML = `<button class="pick" aria-current="${key === selected}"><span class="name">${esc(name)}</span><span class="realm">${esc(realm.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()))} · ${esc(region.toUpperCase())}</span></button>
+    tab.innerHTML = `<button class="pick" aria-current="${key === selected}"><span class="name">${esc(name)}</span><span class="realm">${esc(placeLabel(key))}</span></button>
       <button class="x" title="Remove ${esc(name)}" aria-label="Remove ${esc(name)}">×</button>`;
     tab.querySelector(".pick")!.addEventListener("click", () => choose(key));
     tab.querySelector(".x")!.addEventListener("click", () => removeCharacter(key));
@@ -388,9 +744,9 @@ function choose(key: string | null) {
   if (!selected) {
     url.searchParams.delete("c");
     history.replaceState(null, "", url);
-    document.getElementById("root")!.innerHTML = `<div class="empty"><strong>No characters yet.</strong><br/>Add one at the top as <code>region/realm/name</code>, e.g. <code>us/azralon/Masushaman</code>.</div>`;
+    document.getElementById("root")!.innerHTML = `<div class="empty"><strong>No characters yet.</strong><br/>Add one at the top: pick Retail (region, server, name) or WoW: Forever (region, name, surname).</div>`;
     document.getElementById("updated")!.textContent = "";
-    addInput.focus();
+    addName.focus();
     return;
   }
   url.searchParams.set("c", selected);
@@ -463,6 +819,25 @@ async function load(refresh = false) {
   button.disabled = true;
   root.innerHTML = `<div class="loading">Loading ${esc(key.split("/")[2])}…</div>`;
   try {
+    if (isForever(key)) {
+      const [, region, name] = key.split("/");
+      const res = await fetch(`/api/forever?c=${encodeURIComponent(`${region}/${name}`)}${refresh ? "&refresh" : ""}`);
+      if (!res.ok) throw new Error(await res.text());
+      const data = (await res.json()) as ForeverStatus;
+      if (selected !== key) return;
+      const cls = data.character.status === "ok" ? data.character.data.className : null;
+      if (cls && CLASS_COLORS[cls]) {
+        tabColors.set(key, CLASS_COLORS[cls]);
+        renderTabs();
+      }
+      current = null; // spec buttons only exist on retail cards
+      currentForever = data;
+      root.innerHTML = foreverCard(data);
+      if (foreverView === "professions") loadProfessionsPage(refresh);
+      if (foreverView === "legacy") loadLegacyPage(refresh);
+      document.getElementById("updated")!.textContent = `Updated ${new Date(data.fetchedAt).toLocaleTimeString()}`;
+      return;
+    }
     const res = await fetch(`/api/character?c=${encodeURIComponent(key)}${refresh ? "&refresh" : ""}`);
     if (!res.ok) throw new Error(await res.text());
     const data = (await res.json()) as CharacterStatus;
@@ -483,22 +858,68 @@ async function load(refresh = false) {
 }
 
 /** Checks the character exists, then saves it under the name and realm the server resolved. */
-async function addCharacter(input: string) {
-  const parts = input.split("/").map((p) => p.trim());
-  if (parts.length !== 3 || parts.some((p) => !p)) throw new Error("Use region/realm/name, e.g. us/azralon/Masushaman");
-  const res = await fetch(`/api/character?c=${encodeURIComponent(parts.join("/"))}`);
+async function addCharacter(region: string, realm: string, name: string) {
+  if (!realm) throw new Error("Pick a server");
+  const res = await fetch(`/api/character?c=${encodeURIComponent(`${region}/${realm}/${name}`)}`);
   if (!res.ok) throw new Error(await res.text());
   const data = (await res.json()) as CharacterStatus;
   if (data.raiderio.status !== "ok" && data.blizzard.status !== "ok") {
-    throw new Error(`Couldn't find ${parts[2]} on ${parts[1]} (${parts[0].toUpperCase()})`);
+    throw new Error(`Couldn't find ${name} on ${realm} (${region.toUpperCase()})`);
   }
-  const key = refKey({ ...data.ref, name: data.raiderio.status === "ok" ? data.raiderio.data.name : data.ref.name });
+  return saveCharacter(refKey({ ...data.ref, name: data.raiderio.status === "ok" ? data.raiderio.data.name : data.ref.name }));
+}
+
+/** Same as addCharacter, for WoW: Forever, where characters have a surname instead of a realm. */
+async function addForeverCharacter(region: string, name: string, surname: string) {
+  if (!surname) throw new Error("WoW: Forever characters need their surname too");
+  const res = await fetch(`/api/forever?c=${encodeURIComponent(`${region}/${name}-${surname}`)}`);
+  if (!res.ok) throw new Error(await res.text());
+  const data = (await res.json()) as ForeverStatus;
+  if (data.character.status !== "ok") {
+    throw new Error(`Couldn't find ${name} ${surname} in WoW: Forever (${region.toUpperCase()})${data.character.status === "error" ? `: ${data.character.error}` : `: ${data.character.reason}`}`);
+  }
+  const ch = data.character.data;
+  return saveCharacter(`${FOREVER}/${region}/${ch.surname ? `${ch.name}-${ch.surname}` : `${name}-${surname}`}`);
+}
+
+function saveCharacter(key: string) {
   if (!characters.some((k) => sameRef(k, key))) {
     characters = [...characters, key];
     writeStorage(CHARACTERS_KEY, characters);
   }
   return key;
 }
+
+// The add form remembers the last game and region, and shows only the fields that game needs.
+const ADD_FORM_KEY = "wow-dashboard:add-form";
+
+function syncAddForm() {
+  const forever = addGame.value === "forever";
+  for (const el of addForm.querySelectorAll<HTMLElement>("[data-game]")) el.hidden = el.dataset.game !== addGame.value;
+  addName.placeholder = forever ? "First name" : "Name";
+  writeStorage(ADD_FORM_KEY, { game: addGame.value, region: addRegion.value });
+  if (!forever) loadRealmSuggestions(addRegion.value);
+}
+
+const realmSuggestions = new Map<string, Promise<string[]>>();
+
+/** Fills the server box's suggestions with the region's realms (typing any realm still works). */
+async function loadRealmSuggestions(region: string) {
+  let list = realmSuggestions.get(region);
+  if (!list) {
+    list = fetch(`/api/realms?region=${region}`).then((r) => (r.ok ? r.json() : [])).catch(() => []);
+    realmSuggestions.set(region, list);
+  }
+  const names = await list;
+  if (addRegion.value === region) addRealms.innerHTML = names.map((n) => `<option value="${esc(n)}"></option>`).join("");
+}
+
+const savedForm = readStorage<{ game?: string; region?: string }>(ADD_FORM_KEY, {});
+if (savedForm.game === "forever" || savedForm.game === "retail") addGame.value = savedForm.game;
+if (savedForm.region && [...addRegion.options].some((o) => o.value === savedForm.region)) addRegion.value = savedForm.region;
+addGame.addEventListener("change", syncAddForm);
+addRegion.addEventListener("change", syncAddForm);
+syncAddForm();
 
 addForm.addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -507,8 +928,13 @@ addForm.addEventListener("submit", async (e) => {
   addStatus.className = "add-status";
   addStatus.textContent = "Checking…";
   try {
-    const key = await addCharacter(addInput.value);
-    addInput.value = "";
+    const region = addRegion.value;
+    const name = addName.value.trim();
+    const key = addGame.value === "forever"
+      ? await addForeverCharacter(region, name, addSurname.value.trim())
+      : await addCharacter(region, addRealm.value.trim(), name);
+    addName.value = "";
+    addSurname.value = "";
     addStatus.textContent = "";
     choose(key);
   } catch (err) {
@@ -520,6 +946,37 @@ addForm.addEventListener("submit", async (e) => {
 });
 // Spec buttons re-render only their own panel, from the data already loaded.
 let current: CharacterStatus | null = null;
+// Forever card: switching view re-renders from the data already loaded.
+document.getElementById("root")!.addEventListener("click", (e) => {
+  const button = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-forever-view]");
+  if (!button || !currentForever) return;
+  foreverView = asView(button.dataset.foreverView);
+  writeStorage(FOREVER_VIEW_KEY, foreverView);
+  document.getElementById("root")!.innerHTML = foreverCard(currentForever);
+  if (foreverView === "professions") loadProfessionsPage();
+  if (foreverView === "legacy") loadLegacyPage();
+});
+
+document.getElementById("root")!.addEventListener("click", (e) => {
+  const button = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-legacy-category]");
+  const page = document.querySelector<HTMLElement>(".legacy-page");
+  if (!button || !currentLegacy || !page) return;
+  legacyCategory = button.dataset.legacyCategory!;
+  page.innerHTML = legacyFrame(currentLegacy);
+});
+
+// Missing recipes: the filter box, category and "learn now" box hide rows in their own profession.
+document.getElementById("root")!.addEventListener("input", (e) => {
+  const section = (e.target as HTMLElement).closest<HTMLElement>("section.profession");
+  if (!section || !(e.target as HTMLElement).matches("[data-missing-filter], [data-missing-category], [data-missing-learnable]")) return;
+  const text = section.querySelector<HTMLInputElement>("[data-missing-filter]")!.value.trim().toLowerCase();
+  const category = section.querySelector<HTMLSelectElement>("[data-missing-category]")!.value;
+  const onlyLearnable = section.querySelector<HTMLInputElement>("[data-missing-learnable]")!.checked;
+  for (const row of section.querySelectorAll<HTMLTableRowElement>("table.missing tr[data-name]")) {
+    row.hidden = (!!text && !row.dataset.name!.includes(text)) || (!!category && row.dataset.category !== category) || (onlyLearnable && row.dataset.learnable !== "true");
+  }
+});
+
 document.getElementById("root")!.addEventListener("click", (e) => {
   const button = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-spec-panel]");
   if (!button || !current || current.raiderio.status !== "ok") return;
@@ -530,7 +987,7 @@ document.getElementById("root")!.addEventListener("click", (e) => {
   if (section && html) section.outerHTML = html;
 });
 
-addInput.addEventListener("input", () => (addStatus.textContent = ""));
+addForm.addEventListener("input", () => (addStatus.textContent = ""));
 
 
 document.getElementById("refresh")!.addEventListener("click", () => load(true));
