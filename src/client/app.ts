@@ -1,3 +1,4 @@
+import { loadWaylaid, setupWaylaid, waylaidView } from "./waylaid.js";
 import type { BlizzardData, CharacterRef, CharacterStatus, ForeverCharacter, ForeverLegacy, LegacyChallenge, ForeverProfessions, ProfessionProgress, ProfessionRecipe,ForeverRuleset, ForeverStatus, TalentTree, ForeverQuestCompare, QuestInfo, GearItem,KeystoneRun, RaidDifficulty, RaiderIOData, SourceResult, WarcraftLogsData } from "../types.js";
 
 const CLASS_COLORS: Record<string, string> = {
@@ -509,9 +510,9 @@ function foreverRulesets(r: SourceResult<ForeverRuleset[]>): string {
 
 // The Forever card has two views: everything at a glance, or what the professions earn. Kept in browser storage.
 const FOREVER_VIEW_KEY = "wow-dashboard:forever-view";
-type ForeverView = "overview" | "quests" | "professions" | "legacy";
-const FOREVER_VIEWS: Record<ForeverView, string> = { overview: "Overview", quests: "Quests", professions: "Professions", legacy: "Legacy" };
-const asView = (v: unknown): ForeverView => (v === "quests" || v === "professions" || v === "legacy" ? v : "overview");
+type ForeverView = "overview" | "quests" | "professions" | "legacy" | "crates";
+const FOREVER_VIEWS: Record<ForeverView, string> = { overview: "Overview", quests: "Quests", professions: "Professions", legacy: "Legacy", crates: "Waylaid Crates" };
+const asView = (v: unknown): ForeverView => (typeof v === "string" && Object.hasOwn(FOREVER_VIEWS, v) ? (v as ForeverView) : "overview");
 let foreverView: ForeverView = asView(readStorage<string>(FOREVER_VIEW_KEY, "overview"));
 let currentForever: ForeverStatus | null = null;
 
@@ -528,17 +529,23 @@ function wowheadUrl(r: ProfessionRecipe): string {
 /** A recipe's materials, e.g. "6× Copper Bar, 1× Weak Flux". */
 const reagentList = (r: ProfessionRecipe) => r.reagents.map((x) => `${x.quantity}× ${x.name}`).join(", ");
 
+// Blizzard's recipe ids aren't Wowhead's spell ids (Linen Bandage is recipe 1838, spell 3275), so a recipe name links
+// to the item it makes (whose page lists the recipe), or to a Wowhead search when it makes no item.
+const recipeLink = (r: ProfessionRecipe) =>
+  `<a href="${r.crafted ? `${WOWHEAD}/item=${r.crafted.id}` : `${WOWHEAD}/search?q=${encodeURIComponent(r.name)}`}" target="_blank" rel="noopener">${esc(r.name)}</a>`;
+const itemLink = (id: number, name: string) => `<a href="${WOWHEAD}/item=${id}" target="_blank" rel="noopener">${esc(name)}</a>`;
+
 function professionSection(p: ProfessionProgress): string {
   const knownRows = [...p.known].sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name)).map((r) => `<tr>
-      <td>${esc(r.name)}</td><td class="muted">${esc(r.category)}</td>
-      <td>${r.crafted ? `${esc(r.crafted.name)}${r.crafted.quantity > 1 ? ` <span class="muted small">×${r.crafted.quantity}</span>` : ""}` : `<span class="muted">—</span>`}</td>
-      <td class="muted small">${esc(reagentList(r))}</td>
+      <td>${recipeLink(r)}</td><td class="muted">${esc(r.category)}</td>
+      <td>${r.crafted ? `${itemLink(r.crafted.id, r.crafted.name)}${r.crafted.quantity > 1 ? ` <span class="muted small">×${r.crafted.quantity}</span>` : ""}` : `<span class="muted">—</span>`}</td>
+      <td class="muted small">${r.reagents.map((x) => `${x.quantity}× ${itemLink(x.id, x.name)}`).join(", ")}</td>
     </tr>`).join("");
   const missingRows = p.missing.map((r) => {
     const learn = r.learnFrom;
     const canLearn = learn?.skill != null && learn.skill <= p.skill;
     return `<tr data-name="${esc(r.name.toLowerCase())}" data-category="${esc(r.category)}" data-learnable="${canLearn}" title="${esc(reagentList(r))}">
-      <td>${esc(r.name)}</td><td class="muted">${esc(r.category)}</td>
+      <td>${recipeLink(r)}</td><td class="muted">${esc(r.category)}</td>
       <td>${learn ? esc(learn.name) : `<span class="muted">Trainer or other</span>`}
         <a class="source-link" href="${esc(wowheadUrl(r))}" target="_blank" rel="noopener" title="Where it comes from (vendor, drop or quest) on Wowhead">source ↗</a></td>
       <td class="num ${canLearn ? "up" : "muted"}">${learn?.skill ?? "—"}</td>
@@ -805,6 +812,7 @@ function foreverCard(f: ForeverStatus): string {
   const body = !ch ? `<section>${sourceNotice(f.character)}</section>`
     : foreverView === "professions" ? `<div class="professions-page"><p class="loading">Loading recipes… the first load takes about 20 seconds.</p></div>`
     : foreverView === "legacy" ? `<div class="legacy-page"><p class="loading">Loading Legacy challenges…</p></div>`
+    : foreverView === "crates" ? waylaidView({ region: f.region, level: ch.level, faction: ch.faction })
     : foreverView === "quests" ? `<div class="quests-page">${questCompareBar()}<div class="quests-body"><p class="loading">Loading quests…</p></div></div>`
     : `<div class="grid overview">${panels}</div>`;
 
@@ -991,6 +999,7 @@ async function load(refresh = false) {
       if (foreverView === "professions") loadProfessionsPage(refresh);
       if (foreverView === "legacy") loadLegacyPage(refresh);
       if (foreverView === "quests") loadQuestsPage();
+      if (foreverView === "crates") loadWaylaid(refresh);
       document.getElementById("updated")!.textContent = `Updated ${new Date(data.fetchedAt).toLocaleTimeString()}`;
       return;
     }
@@ -1100,6 +1109,8 @@ addForm.addEventListener("submit", async (e) => {
     button.disabled = false;
   }
 });
+setupWaylaid(document.getElementById("root")!);
+
 // Spec buttons re-render only their own panel, from the data already loaded.
 let current: CharacterStatus | null = null;
 // Forever card: switching view re-renders from the data already loaded.
@@ -1114,6 +1125,7 @@ document.getElementById("root")!.addEventListener("click", (e) => {
   if (foreverView === "professions") loadProfessionsPage();
   if (foreverView === "legacy") loadLegacyPage();
   if (foreverView === "quests") loadQuestsPage();
+  if (foreverView === "crates") loadWaylaid();
 });
 
 document.getElementById("root")!.addEventListener("click", (e) => {

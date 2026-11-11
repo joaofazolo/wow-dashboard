@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
-import type { CharacterClass, CharacterRef, CharacterStatus, ForeverLegacy, ForeverProfessions, ForeverQuestCompare, ForeverStatus, SourceResult } from "./types.js";
+import type { CharacterClass, CharacterRef, CharacterStatus, ForeverAuctionHouse, ForeverLegacy, ForeverProfessions, ForeverQuestCompare, ForeverStatus, SourceResult, WaylaidPrices } from "./types.js";
 import { fetchRaiderIO } from "./sources/raiderio.js";
 import { blizzardEnabled, fetchBlizzard, realmNames } from "./sources/blizzard.js";
 import { fetchWarcraftLogs, warcraftLogsEnabled } from "./sources/warcraftlogs.js";
@@ -11,6 +11,7 @@ import { fetchForeverCharacter, fetchForeverRulesets } from "./sources/forever.j
 import { fetchForeverProfessions } from "./sources/foreverProfessions.js";
 import { fetchForeverLegacy } from "./sources/foreverLegacy.js";
 import { fetchForeverQuestCompare } from "./sources/foreverQuests.js";
+import { fetchForeverAuctionHouses, fetchWaylaidPrices } from "./sources/foreverAuctions.js";
 import { errorMessage } from "./sources/http.js";
 import { sampleBlizzard, sampleWarcraftLogs } from "./sources/placeholder.js";
 
@@ -107,6 +108,32 @@ function loadLegacy(region: string, name: string, force: boolean): Promise<Sourc
   return value;
 }
 
+const auctionHousesCache = new Map<string, Promise<SourceResult<ForeverAuctionHouse[]>>>();
+
+/** The region's auction houses. They don't change while the server runs, so they're kept unless the call failed. */
+function loadAuctionHouses(region: string): Promise<SourceResult<ForeverAuctionHouse[]>> {
+  let value = auctionHousesCache.get(region);
+  if (!value) {
+    value = settle(blizzardEnabled, "Set BLIZZARD_CLIENT_ID / BLIZZARD_CLIENT_SECRET in .env", () => fetchForeverAuctionHouses(region));
+    auctionHousesCache.set(region, value);
+    value.then((r) => r.status === "error" && auctionHousesCache.delete(region));
+  }
+  return value;
+}
+
+const waylaidCache = new Map<string, { at: number; value: Promise<SourceResult<WaylaidPrices>> }>();
+
+/** Crate and material prices in one auction house. Blizzard refreshes auction data about once an hour. */
+function loadWaylaidPrices(region: string, houseId: number, force: boolean): Promise<SourceResult<WaylaidPrices>> {
+  const key = `${region}/${houseId}`;
+  const hit = waylaidCache.get(key);
+  if (hit && !force && Date.now() - hit.at < CACHE_MS) return hit.value;
+  const value = settle(blizzardEnabled, "Set BLIZZARD_CLIENT_ID / BLIZZARD_CLIENT_SECRET in .env", () => fetchWaylaidPrices(region, houseId));
+  waylaidCache.set(key, { at: Date.now(), value });
+  value.then((r) => r.status === "error" && waylaidCache.delete(key)); // don't keep serving a failure
+  return value;
+}
+
 async function buildBundle(): Promise<{ js: string; version: string }> {
   const result = await build({
     entryPoints: [fileURLToPath(new URL("./client/app.ts", import.meta.url))],
@@ -187,6 +214,18 @@ const server = createServer(async (req, res) => {
         return send(res, 400, "text/plain", "Expected region/Name-Surname, e.g. us/Thrall-Stormborn (region: us, eu, kr or tw)");
       }
       return send(res, 200, "application/json", JSON.stringify(await loadProfessions(region.toLowerCase(), name, url.searchParams.has("refresh"))));
+    }
+    if (url.pathname === "/api/forever/auction-houses") {
+      const region = (url.searchParams.get("region") ?? "").toLowerCase();
+      if (!REGIONS.has(region)) return send(res, 400, "text/plain", "Expected region: us, eu, kr or tw");
+      return send(res, 200, "application/json", JSON.stringify(await loadAuctionHouses(region)));
+    }
+    if (url.pathname === "/api/forever/waylaid-prices") {
+      // ?region=us&house=110
+      const region = (url.searchParams.get("region") ?? "").toLowerCase();
+      const house = Number(url.searchParams.get("house"));
+      if (!REGIONS.has(region) || !Number.isInteger(house) || house <= 0) return send(res, 400, "text/plain", "Expected ?region=us&house=110 (region: us, eu, kr or tw)");
+      return send(res, 200, "application/json", JSON.stringify(await loadWaylaidPrices(region, house, url.searchParams.has("refresh"))));
     }
     if (url.pathname === "/api/forever") {
       // WoW: Forever characters have no realm: "region/Name-Surname".

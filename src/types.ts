@@ -245,6 +245,20 @@ export interface ForeverRuleset {
   up: boolean;
 }
 
+/** A WoW: Forever auction house. Each region has several per faction plus neutral (Blackwater) ones. */
+export interface ForeverAuctionHouse {
+  id: number;
+  name: string;
+}
+
+/** Live auction house prices for the Waylaid Crate calculator: the cheapest listings of each crate and material. */
+export interface WaylaidPrices {
+  houseId: number;
+  fetchedAt: string;
+  /** item id → [unit price in copper, quantity] listings, cheapest first, cut off once there's plenty to buy. */
+  listings: Record<number, [number, number][]>;
+}
+
 /** One profession recipe. */
 export interface ProfessionRecipe {
   id: number;

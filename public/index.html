@@ -184,6 +184,30 @@
 
     /* Talents: modelled on the in-game talent frame (gold border when maxed, green while it can take points, grey when locked). */
     section.talents .spec-tabs { margin-bottom: 12px; }
+    /* Waylaid Crates calculator */
+    .waylaid-settings { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; margin: 10px 0 14px; font-size: 13px; }
+    .waylaid-settings input[type="number"] { width: 72px; padding: 3px 6px; }
+    .waylaid-settings select { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; font: inherit; }
+    .waylaid-summary { margin: 0 0 10px; }
+    table.waylaid { font-size: 13px; }
+    table.waylaid td { vertical-align: top; }
+    table.waylaid tr.best td { background: color-mix(in srgb, var(--q-uncommon) 9%, transparent); }
+    table.waylaid .strong { font-weight: 600; }
+    .money { white-space: nowrap; color: #ffd100; }
+    .money.up { color: #3fb950; }
+    .waylaid-market .waylaid-settings { margin: 0 0 6px; }
+    .warn { color: #d29922; }
+    .q-common { color: var(--q-common); }
+    .q-uncommon { color: var(--q-uncommon); }
+    .waylaid-tier { margin-top: 8px; }
+    .waylaid-tier > summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
+    .waylaid-crates { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; margin-top: 6px; }
+    .waylaid-crates fieldset { border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px 8px; margin: 0; min-width: 0; }
+    .waylaid-crates legend { font-size: 13px; font-weight: 600; padding: 0 4px; }
+    .waylaid-crates label { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12px; margin-top: 4px; }
+    .waylaid-crates input { width: 92px; padding: 3px 6px; font-size: 12px; text-align: right; }
+    .waylaid-crates input.invalid { border-color: #f85149; }
+    .waylaid-crates label a { text-decoration: none; } .waylaid-crates label a:hover { text-decoration: underline; }
     .talent-frame { display: flex; flex-wrap: wrap; justify-content: center; gap: 14px; }
     .talent-tree { position: relative; padding: 0 16px 16px; border: 1px solid #4a3a24; border-radius: 6px; overflow: hidden;
       background: linear-gradient(rgba(12, 9, 6, .86), rgba(12, 9, 6, .94)), var(--tree-art, none) center / cover, #120e0a; box-shadow: inset 0 0 30px #000; }
