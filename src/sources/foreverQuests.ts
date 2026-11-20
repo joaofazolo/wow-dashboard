@@ -50,7 +50,7 @@ async function questLog(region: string, character: string): Promise<Log> {
 }
 
 /** Quest details for a set of ids, sorted by area then name. Quests the API can't find keep their name only. */
-async function describe(region: string, ids: Map<number, string>): Promise<QuestInfo[]> {
+export async function describe(region: string, ids: Map<number, string>): Promise<QuestInfo[]> {
   const list = await pool([...ids], async ([id, name]): Promise<QuestInfo> => {
     const q = await quest(region, id).catch(() => null);
     // Class quests have no area, only a category (e.g. "Warrior").

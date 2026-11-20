@@ -125,3 +125,38 @@ export async function fetchForeverProfessions(region: string, name: string): Pro
 
   return { professions: out };
 }
+
+const CRAFTING = { Blacksmithing: 164, Leatherworking: 165, Tailoring: 197, Engineering: 202 };
+type Crafted = { items: Map<number, { profession: string; skill: number | null }>; complete: boolean };
+const craftedCache = new Map<string, Promise<Crafted>>();
+
+/**
+ * Gear made by a profession, by item id, with the skill its recipe item asks for (null when it's trained). For the
+ * Upgrades view. A profession that fails to load is left out (`complete` false) and tried again on the next call.
+ */
+export function craftedGear(region: string): Promise<Crafted> {
+  return memo(craftedCache, region, async () => {
+    const items: Crafted["items"] = new Map();
+    let complete = true;
+    for (const [profession, id] of Object.entries(CRAFTING)) {
+      try {
+        const doc = await blizzardGet<{ skill_tiers?: { id: number }[] }>(region, `/data/wow/profession/${id}?${staticQuery(region)}`);
+        const tier = doc.skill_tiers?.[0];
+        if (!tier) continue;
+        const [list, teachers] = await Promise.all([tierRecipes(region, id, tier.id), recipeItems(region, profession)]);
+        await pool(list, async (r) => {
+          const d = await recipe(region, r.id).catch(() => null);
+          if (!d?.crafted_item) return;
+          const teacherId = teachers.get(r.name.toLowerCase());
+          const teacher = teacherId ? await item(region, teacherId).catch(() => null) : null;
+          items.set(d.crafted_item.id, { profession, skill: teacher?.preview_item?.requirements?.skill?.level ?? null });
+        });
+      } catch (err) {
+        console.warn(`Forever ${profession} recipes unavailable: ${err instanceof Error ? err.message : err}`);
+        complete = false;
+      }
+    }
+    if (!complete) setTimeout(() => craftedCache.delete(region)); // after memo has stored it
+    return { items, complete };
+  });
+}

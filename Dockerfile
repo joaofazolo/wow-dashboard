@@ -9,6 +9,7 @@ RUN npm ci --omit=dev && npm cache clean --force
 COPY tsconfig.json ./
 COPY src/ src/
 COPY public/ public/
+COPY data/ data/
 
 ENV NODE_ENV=production PORT=3000
 EXPOSE 3000

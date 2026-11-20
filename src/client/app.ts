@@ -1,4 +1,5 @@
 import { loadWaylaid, setupWaylaid, waylaidView } from "./waylaid.js";
+import { loadUpgrades, setupUpgrades, upgradesView } from "./upgrades.js";
 import type { BlizzardData, CharacterRef, CharacterStatus, ForeverCharacter, ForeverLegacy, LegacyChallenge, ForeverProfessions, ProfessionProgress, ProfessionRecipe,ForeverRuleset, ForeverStatus, TalentTree, ForeverQuestCompare, QuestInfo, GearItem,KeystoneRun, RaidDifficulty, RaiderIOData, SourceResult, WarcraftLogsData } from "../types.js";
 
 const CLASS_COLORS: Record<string, string> = {
@@ -456,7 +457,7 @@ function foreverQuestsSection(ch: ForeverCharacter): string {
   const q = ch.quests;
   if (!q) return `<section data-panel="forever-quests"><h3>Quest log</h3><p class="notice">Quests unavailable.</p></section>`;
   return `<section data-panel="forever-quests"><h3>Quest log <span>${q.inProgress.length} active${q.completed != null ? ` · ${q.completed.toLocaleString()} done` : ""}</span></h3>
-    ${q.inProgress.length ? `<ul class="quest-list">${q.inProgress.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>` : `<p class="notice">No quests in progress.</p>`}
+    ${q.inProgress.length ? `<ul class="quest-list">${q.inProgress.map((x) => `<li>${esc(x.name)}${x.area ? ` <span class="muted small">${esc(x.area)}</span>` : ""}</li>`).join("")}</ul>` : `<p class="notice">No quests in progress.</p>`}
   </section>`;
 }
 
@@ -510,8 +511,8 @@ function foreverRulesets(r: SourceResult<ForeverRuleset[]>): string {
 
 // The Forever card has two views: everything at a glance, or what the professions earn. Kept in browser storage.
 const FOREVER_VIEW_KEY = "wow-dashboard:forever-view";
-type ForeverView = "overview" | "quests" | "professions" | "legacy" | "crates";
-const FOREVER_VIEWS: Record<ForeverView, string> = { overview: "Overview", quests: "Quests", professions: "Professions", legacy: "Legacy", crates: "Waylaid Crates" };
+type ForeverView = "overview" | "quests" | "professions" | "upgrades" | "legacy" | "crates";
+const FOREVER_VIEWS: Record<ForeverView, string> = { overview: "Overview", quests: "Quests", professions: "Professions", upgrades: "Upgrades", legacy: "Legacy", crates: "Waylaid Crates" };
 const asView = (v: unknown): ForeverView => (typeof v === "string" && Object.hasOwn(FOREVER_VIEWS, v) ? (v as ForeverView) : "overview");
 let foreverView: ForeverView = asView(readStorage<string>(FOREVER_VIEW_KEY, "overview"));
 let currentForever: ForeverStatus | null = null;
@@ -813,12 +814,183 @@ function foreverCard(f: ForeverStatus): string {
     : foreverView === "professions" ? `<div class="professions-page"><p class="loading">Loading recipes… the first load takes about 20 seconds.</p></div>`
     : foreverView === "legacy" ? `<div class="legacy-page"><p class="loading">Loading Legacy challenges…</p></div>`
     : foreverView === "crates" ? waylaidView({ region: f.region, level: ch.level, faction: ch.faction })
+    : foreverView === "upgrades" ? upgradesView({ key: `${f.region}/${f.name.toLowerCase()}`, region: f.region, className: ch.className, level: ch.level, gear: ch.gear })
     : foreverView === "quests" ? `<div class="quests-page">${questCompareBar()}<div class="quests-body"><p class="loading">Loading quests…</p></div></div>`
     : `<div class="grid overview">${panels}</div>`;
 
   return `<article class="card" style="--class:${color}">${hero}${views}${body}
     <div class="sources">${pill("Blizzard (Forever)", f.character)}${foreverRulesets(f.rulesets)}</div>
   </article>`;
+}
+
+// WoW: Forever teams: a name and some saved Forever characters, overviewed together. Each gets a tab, keyed "team/<id>".
+const TEAMS_KEY = "wow-dashboard:teams";
+const TEAM = "team";
+interface Team { id: string; name: string; members: string[] }
+interface TeamMember { key: string; data: ForeverStatus | null; error: string | null }
+
+const isTeam = (key: string) => key.split("/")[0] === TEAM;
+const teamKey = (t: Team) => `${TEAM}/${t.id}`;
+const teamOf = (key: string) => teams.find((t) => teamKey(t) === key) ?? null;
+/** "forever/us/Thrall-Stormborn" → "Thrall Stormborn". */
+const foreverName = (key: string) => key.split("/")[2].replace("-", " ");
+let currentTeam: { key: string; members: TeamMember[] } | null = null;
+// Whether the viewer opened or closed the editor; until they do, it's open only while the team is empty.
+let teamEditOpen: boolean | null = null;
+
+function saveTeams() {
+  writeStorage(TEAMS_KEY, teams);
+}
+
+function teamEditor(team: Team): string {
+  const options = characters.filter(isForever).map((k) =>
+    `<label><input type="checkbox" data-team-member="${esc(k)}" ${team.members.includes(k) ? "checked" : ""} /> ${esc(foreverName(k))} <span class="muted">${esc(k.split("/")[1].toUpperCase())}</span></label>`).join("");
+  return `<section class="wide"><details class="team-edit"${teamEditOpen ?? !team.members.length ? " open" : ""}>
+    <summary><h3><span>Edit team</span> <span>${team.members.length} member${team.members.length === 1 ? "" : "s"}</span></h3></summary>
+    <label class="team-rename">Name <input data-team-name value="${esc(team.name)}" aria-label="Team name" /></label>
+    ${options ? `<div class="team-pick">${options}</div>` : `<p class="notice">No WoW: Forever characters saved yet. Add some at the top (pick WoW: Forever), then tick them here.</p>`}
+  </details></section>`;
+}
+
+function teamRoster(members: TeamMember[]): string {
+  const rows = members.map(({ key, data, error }) => {
+    const ch = data?.character.status === "ok" ? data.character.data : null;
+    const open = `<button type="button" class="link-button" data-open-character="${esc(key)}" style="color:${(ch?.className && CLASS_COLORS[ch.className]) ?? "inherit"}">${esc(ch ? [ch.name, ch.surname].filter(Boolean).join(" ") : foreverName(key))}</button>`;
+    if (!ch) {
+      const why = error ?? (data && data.character.status === "error" ? data.character.error : data && "reason" in data.character ? data.character.reason : "Unavailable");
+      return `<tr><td>${open}</td><td colspan="7" class="notice err">${esc(why)}</td></tr>`;
+    }
+    return `<tr>
+      <td>${open}</td>
+      <td class="num">${ch.level}</td>
+      <td>${[ch.race, ch.spec, ch.className].filter(Boolean).map(esc).join(" ")}</td>
+      <td class="num">${ch.equippedItemLevel ?? "—"}</td>
+      <td>${esc(ch.faction ?? "—")}</td>
+      <td>${esc(ch.ruleset ?? "—")} <span class="muted small">${esc(key.split("/")[1].toUpperCase())}</span></td>
+      <td>${ch.guild ? `&lt;${esc(ch.guild)}&gt;` : `<span class="muted">—</span>`}</td>
+      <td class="num">${ch.lastLogin ? ago(ch.lastLogin) : "—"}</td>
+    </tr>`;
+  }).join("");
+  return `<section class="wide"><h3>Roster</h3>
+    ${members.length ? `<div class="team-roster"><table><tr><th>Character</th><th class="num">Level</th><th>Race / class</th><th class="num">Item level</th><th>Faction</th><th>Ruleset</th><th>Guild</th><th class="num">Last login</th></tr>${rows}</table></div>`
+      : `<p class="notice">No members yet. Tick some characters under Edit team.</p>`}
+  </section>`;
+}
+
+/** Classes and factions, plus a warning when the team can't actually group (Forever's rulesets and regions are separate). */
+function teamComposition(chars: ForeverCharacter[], regions: string[]): string {
+  const counts = (values: (string | null)[]) => {
+    const m = new Map<string, number>();
+    for (const v of values) if (v) m.set(v, (m.get(v) ?? 0) + 1);
+    return [...m].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  };
+  const chips = (list: [string, number][], color?: (k: string) => string | undefined) =>
+    `<div class="chips">${list.map(([k, n]) => `<span class="chip"${color?.(k) ? ` style="color:${color(k)};border-color:${color(k)}"` : ""}>${esc(k)} ×${n}</span>`).join("")}</div>`;
+  const split = [
+    new Set(regions).size > 1 ? `regions (${[...new Set(regions)].map((r) => r.toUpperCase()).join(", ")})` : null,
+    new Set(chars.map((c) => c.ruleset).filter(Boolean)).size > 1 ? `rulesets (${[...new Set(chars.map((c) => c.ruleset).filter(Boolean))].join(", ")})` : null,
+    new Set(chars.map((c) => c.faction).filter(Boolean)).size > 1 ? "factions" : null,
+  ].filter(Boolean);
+  return `<section><h3>Composition</h3>
+    ${split.length ? `<p class="notice err">Members are on different ${split.join(" and ")}, so they can't all group together.</p>` : ""}
+    <div class="legacy-exp">Classes</div>${chips(counts(chars.map((c) => c.className)), (k) => CLASS_COLORS[k])}
+    <div class="legacy-exp">Factions</div>${chips(counts(chars.map((c) => c.faction)))}
+  </section>`;
+}
+
+/** Every profession someone on the team has, with who has it and at what skill, best first. */
+function teamProfessions(members: { key: string; ch: ForeverCharacter }[]): string {
+  const byProf = new Map<string, { who: string; skill: number; max: number; secondary: boolean }[]>();
+  for (const { key, ch } of members) {
+    for (const p of ch.professions ?? []) {
+      byProf.set(p.name, [...(byProf.get(p.name) ?? []), { who: ch.name ?? foreverName(key), skill: p.skill, max: p.max, secondary: p.secondary }]);
+    }
+  }
+  const profs = [...byProf].sort((a, b) => Number(a[1][0].secondary) - Number(b[1][0].secondary) || a[0].localeCompare(b[0]));
+  const body = profs.map(([name, who]) => {
+    const sorted = [...who].sort((a, b) => b.skill - a.skill);
+    const best = sorted[0];
+    return meter(`${esc(name)}${best.secondary ? ` <span class="muted small">secondary</span>` : ""}`, best.skill, best.max,
+      sorted.map((w) => `${esc(w.who)} ${w.skill}/${w.max}`).join(" · "));
+  }).join("");
+  return `<section><h3>Professions <span>${profs.length}</span></h3>${body || `<p class="notice">No professions learned.</p>`}</section>`;
+}
+
+/** Quests at least two members have in their logs: things to do together, grouped by area so they can be done in one trip. */
+function teamSharedQuests(members: { key: string; ch: ForeverCharacter }[]): string {
+  const who = new Map<number, { quest: QuestInfo; names: string[] }>();
+  for (const { ch } of members) {
+    for (const q of ch.quests?.inProgress ?? []) {
+      const entry = who.get(q.id) ?? { quest: q, names: [] };
+      if (!entry.names.includes(ch.name)) entry.names.push(ch.name);
+      who.set(q.id, entry);
+    }
+  }
+  const shared = [...who.values()].filter((e) => e.names.length > 1)
+    .sort((a, b) => (a.quest.area ?? "~").localeCompare(b.quest.area ?? "~") || b.names.length - a.names.length || a.quest.name.localeCompare(b.quest.name));
+  const rows = shared.map(({ quest: q, names }, i) => `${i === 0 || q.area !== shared[i - 1].quest.area ? `<tr><th colspan="2">${esc(q.area ?? "Unknown area")}</th></tr>` : ""}
+    <tr><td><a href="${esc(WOWHEAD_QUEST(q.id))}" target="_blank" rel="noopener">${esc(q.name)}</a>${q.type ? ` <span class="quest-type ${esc(q.type.toLowerCase())}">${esc(q.type)}</span>` : ""}</td>
+      <td class="muted small">${names.map(esc).join(", ")}</td></tr>`).join("");
+  return `<section><h3>Shared quests <span>${shared.length}</span></h3>
+    ${shared.length ? `<table class="team-quests">${rows}</table>`
+      : `<p class="notice">${members.length > 1 ? "No quest is in more than one member's log." : "Add at least two members to see quests they share."}</p>`}
+  </section>`;
+}
+
+function teamCard(team: Team, members: TeamMember[]): string {
+  const loaded = members.flatMap((m) => (m.data?.character.status === "ok" ? [{ key: m.key, ch: m.data.character.data }] : []));
+  const chars = loaded.map((m) => m.ch);
+  const avg = (xs: number[]) => (xs.length ? (xs.reduce((a, b) => a + b, 0) / xs.length).toFixed(1).replace(/\.0$/, "") : "—");
+  const quests = chars.map((c) => c.quests?.completed).filter((n): n is number => n != null);
+
+  const hero = `<div class="hero">
+    <div>
+      <h2>${esc(team.name)}</h2>
+      <div class="sub">Team · ${team.members.length} member${team.members.length === 1 ? "" : "s"} · WoW: Forever</div>
+    </div>
+    <div class="kpis">
+      ${kpi("Avg level", avg(chars.map((c) => c.level)))}
+      ${kpi("Avg item level", avg(chars.map((c) => c.equippedItemLevel).filter((n): n is number => n != null)))}
+      ${quests.length ? kpi("Quests done", quests.reduce((a, b) => a + b, 0).toLocaleString()) : ""}
+    </div>
+  </div>`;
+  const regions = loaded.map((m) => m.key.split("/")[1]);
+  const overview = loaded.length ? `${teamComposition(chars, regions)}${teamProfessions(loaded)}${teamSharedQuests(loaded)}` : "";
+  return `<article class="card" style="--class:var(--accent)">${hero}<div class="grid">${teamEditor(team)}${teamRoster(members)}${overview}</div></article>`;
+}
+
+async function loadTeam(key: string, refresh: boolean) {
+  const team = teamOf(key)!;
+  const members = await Promise.all(team.members.map(async (m): Promise<TeamMember> => {
+    const [, region, name] = m.split("/");
+    try {
+      const res = await fetch(`/api/forever?c=${encodeURIComponent(`${region}/${name}`)}${refresh ? "&refresh" : ""}`);
+      if (!res.ok) throw new Error(await res.text());
+      return { key: m, data: (await res.json()) as ForeverStatus, error: null };
+    } catch (err) {
+      return { key: m, data: null, error: err instanceof Error ? err.message : String(err) };
+    }
+  }));
+  if (selected !== key) return;
+  for (const { key: k, data } of members) {
+    const cls = data?.character.status === "ok" ? data.character.data.className : null;
+    if (cls && CLASS_COLORS[cls]) tabColors.set(k, CLASS_COLORS[cls]);
+  }
+  renderTabs();
+  current = null;
+  currentForever = null;
+  currentTeam = { key, members };
+  document.getElementById("root")!.innerHTML = teamCard(team, members);
+  document.getElementById("updated")!.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+}
+
+function createTeam(name: string): string {
+  if (!name) throw new Error("Give the team a name");
+  if (teams.some((t) => t.name.toLowerCase() === name.toLowerCase())) throw new Error(`There's already a team called ${name}`);
+  const team: Team = { id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, name, members: [] };
+  teams = [...teams, team];
+  saveTeams();
+  return teamKey(team);
 }
 
 // Everything the viewer chooses is kept in this browser's storage; nothing is configured on the server.
@@ -862,6 +1034,7 @@ function writeStorage(key: string, value: unknown) {
 }
 
 let characters: string[] = readStorage<string[]>(CHARACTERS_KEY, []).filter((k) => typeof k === "string" && k.split("/").length === 3);
+let teams: Team[] = readStorage<Team[]>(TEAMS_KEY, []).filter((t) => typeof t?.id === "string" && typeof t.name === "string" && Array.isArray(t.members));
 
 let selected: string | null = null;
 // Class colours of characters already loaded, so tabs can be tinted.
@@ -879,26 +1052,49 @@ function renderTabs() {
     tab.querySelector(".pick")!.addEventListener("click", () => choose(key));
     tab.querySelector(".x")!.addEventListener("click", () => removeCharacter(key));
     return tab;
+  }), ...teams.map((team) => {
+    const key = teamKey(team);
+    const tab = document.createElement("div");
+    tab.className = `tab team${key === selected ? " active" : ""}`;
+    tab.innerHTML = `<button class="pick" aria-current="${key === selected}"><span class="name">${esc(team.name)}</span><span class="realm">Team · ${team.members.length} member${team.members.length === 1 ? "" : "s"}</span></button>
+      <button class="x" title="Delete team ${esc(team.name)}" aria-label="Delete team ${esc(team.name)}">×</button>`;
+    tab.querySelector(".pick")!.addEventListener("click", () => choose(key));
+    tab.querySelector(".x")!.addEventListener("click", () => removeTeam(team));
+    return tab;
   }));
+}
+
+function removeTeam(team: Team) {
+  if (!confirm(`Delete the team ${team.name}? Its characters stay saved.`)) return;
+  teams = teams.filter((t) => t !== team);
+  saveTeams();
+  if (teamKey(team) === selected) choose(characters[0] ?? (teams[0] ? teamKey(teams[0]) : null));
+  else renderTabs();
 }
 
 function removeCharacter(key: string) {
   if (!confirm(`Remove ${refLabel(key)} from the list?`)) return;
   characters = characters.filter((k) => k !== key);
   writeStorage(CHARACTERS_KEY, characters);
-  if (key === selected) choose(characters[0] ?? null);
+  if (teams.some((t) => t.members.includes(key))) {
+    teams = teams.map((t) => ({ ...t, members: t.members.filter((m) => m !== key) }));
+    saveTeams();
+  }
+  if (key === selected) choose(characters[0] ?? (teams[0] ? teamKey(teams[0]) : null));
   else renderTabs();
 }
 
 /** Shows a saved character, or the "add one" screen when the list is empty. */
 function choose(key: string | null) {
-  selected = characters.find((k) => key && sameRef(k, key)) ?? characters[0] ?? null;
+  teamEditOpen = null;
+  const all = [...characters, ...teams.map(teamKey)];
+  selected = all.find((k) => key && sameRef(k, key)) ?? all[0] ?? null;
   renderTabs();
   const url = new URL(location.href);
   if (!selected) {
     url.searchParams.delete("c");
     history.replaceState(null, "", url);
-    document.getElementById("root")!.innerHTML = `<div class="empty"><strong>No characters yet.</strong><br/>Add one at the top: pick Retail (region, server, name) or WoW: Forever (region, name, surname).</div>`;
+    document.getElementById("root")!.innerHTML = `<div class="empty"><strong>No characters yet.</strong><br/>Add one at the top: pick Retail (region, server, name) or WoW: Forever (region, name, surname), or create a WoW: Forever team.</div>`;
     document.getElementById("updated")!.textContent = "";
     addName.focus();
     return;
@@ -979,8 +1175,9 @@ async function load(refresh = false) {
   const key = selected;
   if (!key) return;
   button.disabled = true;
-  root.innerHTML = `<div class="loading">Loading ${esc(key.split("/")[2])}…</div>`;
+  root.innerHTML = `<div class="loading">Loading ${esc(isTeam(key) ? teamOf(key)!.name : key.split("/")[2])}…</div>`;
   try {
+    if (isTeam(key)) return await loadTeam(key, refresh);
     if (isForever(key)) {
       const [, region, name] = key.split("/");
       const res = await fetch(`/api/forever?c=${encodeURIComponent(`${region}/${name}`)}${refresh ? "&refresh" : ""}`);
@@ -1000,6 +1197,7 @@ async function load(refresh = false) {
       if (foreverView === "legacy") loadLegacyPage(refresh);
       if (foreverView === "quests") loadQuestsPage();
       if (foreverView === "crates") loadWaylaid(refresh);
+      if (foreverView === "upgrades") loadUpgrades();
       document.getElementById("updated")!.textContent = `Updated ${new Date(data.fetchedAt).toLocaleTimeString()}`;
       return;
     }
@@ -1059,11 +1257,13 @@ function saveCharacter(key: string) {
 const ADD_FORM_KEY = "wow-dashboard:add-form";
 
 function syncAddForm() {
-  const forever = addGame.value === "forever";
-  for (const el of addForm.querySelectorAll<HTMLElement>("[data-game]")) el.hidden = el.dataset.game !== addGame.value;
-  addName.placeholder = forever ? "First name" : "Name";
-  writeStorage(ADD_FORM_KEY, { game: addGame.value, region: addRegion.value });
-  if (!forever) loadRealmSuggestions(addRegion.value);
+  const game = addGame.value;
+  for (const el of addForm.querySelectorAll<HTMLElement>("[data-game]")) el.hidden = !el.dataset.game!.split(" ").includes(game);
+  addName.placeholder = game === "team" ? "Team name" : game === "forever" ? "First name" : "Name";
+  addName.setAttribute("aria-label", game === "team" ? "Team name" : "Character name");
+  addForm.querySelector("button")!.textContent = game === "team" ? "Create" : "Add";
+  writeStorage(ADD_FORM_KEY, { game, region: addRegion.value });
+  if (game === "retail") loadRealmSuggestions(addRegion.value);
 }
 
 const realmSuggestions = new Map<string, Promise<string[]>>();
@@ -1080,7 +1280,7 @@ async function loadRealmSuggestions(region: string) {
 }
 
 const savedForm = readStorage<{ game?: string; region?: string }>(ADD_FORM_KEY, {});
-if (savedForm.game === "forever" || savedForm.game === "retail") addGame.value = savedForm.game;
+if (savedForm.game === "forever" || savedForm.game === "retail" || savedForm.game === "team") addGame.value = savedForm.game;
 if (savedForm.region && [...addRegion.options].some((o) => o.value === savedForm.region)) addRegion.value = savedForm.region;
 addGame.addEventListener("change", syncAddForm);
 addRegion.addEventListener("change", syncAddForm);
@@ -1095,7 +1295,8 @@ addForm.addEventListener("submit", async (e) => {
   try {
     const region = addRegion.value;
     const name = addName.value.trim();
-    const key = addGame.value === "forever"
+    const key = addGame.value === "team" ? createTeam(name)
+      : addGame.value === "forever"
       ? await addForeverCharacter(region, name, addSurname.value.trim())
       : await addCharacter(region, addRealm.value.trim(), name);
     addName.value = "";
@@ -1110,6 +1311,7 @@ addForm.addEventListener("submit", async (e) => {
   }
 });
 setupWaylaid(document.getElementById("root")!);
+setupUpgrades(document.getElementById("root")!);
 
 // Spec buttons re-render only their own panel, from the data already loaded.
 let current: CharacterStatus | null = null;
@@ -1126,6 +1328,7 @@ document.getElementById("root")!.addEventListener("click", (e) => {
   if (foreverView === "legacy") loadLegacyPage();
   if (foreverView === "quests") loadQuestsPage();
   if (foreverView === "crates") loadWaylaid();
+  if (foreverView === "upgrades") loadUpgrades();
 });
 
 document.getElementById("root")!.addEventListener("click", (e) => {
@@ -1175,6 +1378,42 @@ document.getElementById("root")!.addEventListener("click", (e) => {
   const html = panel === "cutoffs" ? cutoffsSection(current.raiderio.data) : panel === "logs" ? logsSection(current.warcraftlogs) : null;
   if (section && html) section.outerHTML = html;
 });
+
+// Team page: names open that character, the checkboxes and name box edit the team.
+document.getElementById("root")!.addEventListener("click", (e) => {
+  const button = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-open-character]");
+  if (button) choose(button.dataset.openCharacter!);
+});
+
+document.getElementById("root")!.addEventListener("change", (e) => {
+  const input = e.target as HTMLInputElement;
+  const team = selected ? teamOf(selected) : null;
+  if (!team) return;
+  if (input.matches("[data-team-member]")) {
+    const key = input.dataset.teamMember!;
+    // Kept in the order of the character tabs, so the roster reads the same way.
+    const members = new Set(team.members.filter((m) => m !== key));
+    if (input.checked) members.add(key);
+    team.members = characters.filter((k) => members.has(k));
+    saveTeams();
+    loadTeam(selected!, false); // members already loaded come from the server's cache
+  } else if (input.matches("[data-team-name]")) {
+    const name = input.value.trim();
+    if (!name || teams.some((t) => t !== team && t.name.toLowerCase() === name.toLowerCase())) {
+      input.value = team.name;
+      return;
+    }
+    team.name = name;
+    saveTeams();
+    renderTabs();
+    document.querySelector(".card .hero h2")!.textContent = name;
+  }
+});
+
+// "toggle" doesn't bubble, so it's caught on the way down.
+document.getElementById("root")!.addEventListener("toggle", (e) => {
+  if ((e.target as HTMLElement).matches("details.team-edit")) teamEditOpen = (e.target as HTMLDetailsElement).open;
+}, true);
 
 addForm.addEventListener("input", () => (addStatus.textContent = ""));
 

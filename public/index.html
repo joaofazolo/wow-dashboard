@@ -184,6 +184,67 @@
 
     /* Talents: modelled on the in-game talent frame (gold border when maxed, green while it can take points, grey when locked). */
     section.talents .spec-tabs { margin-bottom: 12px; }
+    /* Upgrades: laid out like the Forever Leveling BiS addon's window */
+    .bis-frame { padding: 0; overflow: hidden; background: #0d1117; border-color: #30363d; }
+    .bis-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 8px 14px; background: linear-gradient(#1c2128, #161b22); border-bottom: 1px solid #30363d; }
+    .bis-title h3 { margin: 0; color: #ffd100; font-size: 15px; letter-spacing: .02em; }
+    .bis-panes { display: flex; gap: 4px; }
+    .bis-panes button { font-size: 12px; padding: 3px 10px; border-radius: 4px; }
+    .bis-panes button[aria-pressed="true"] { background: #5a4613; border-color: #8a6d1d; color: #ffd100; }
+    .bis-selectors { display: flex; flex-wrap: wrap; gap: 8px 14px; padding: 10px 14px; border-bottom: 1px solid #21262d; }
+    .bis-selectors label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--muted); }
+    .bis-selectors select, .bis-selectors output { min-width: 110px; background: #161b22; color: #ffd100; border: 1px solid #30363d; border-radius: 4px; padding: 4px 6px; font: inherit; font-size: 12px; }
+    .bis-selectors output { color: #c69b6d; }
+    .bis-main { display: grid; grid-template-columns: minmax(220px, 260px) 1fr; min-height: 420px; }
+    .bis-slots { display: flex; flex-direction: column; padding: 8px 6px; border-right: 1px solid #21262d; background: #0b0f14; }
+    .bis-slots button { display: grid; grid-template-columns: 22px 66px 1fr; gap: 6px; align-items: center; text-align: left; background: none; border: 0; border-left: 2px solid transparent; border-radius: 0; padding: 3px 6px; font-size: 12px; color: var(--text); cursor: pointer; }
+    .bis-slots button:hover { background: #161b22; }
+    .bis-slots button[aria-pressed="true"] { background: #1c2128; border-left-color: #ffd100; }
+    .bis-slots button[aria-pressed="true"] .bis-slot-name { color: #ffd100; }
+    .bis-slot-name { color: var(--muted); }
+    .bis-slot-item { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bis-icon { width: 20px; height: 20px; border-radius: 3px; border: 1px solid #30363d; background: #161b22; display: inline-block; object-fit: cover; }
+    .bis-icon.blank { opacity: .4; }
+    .bis-detail { padding: 8px 14px 12px; min-width: 0; }
+    .bis-group { margin-bottom: 12px; }
+    .bis-group h4 { display: flex; align-items: center; gap: 8px; margin: 6px 0 4px; padding-left: 8px; border-left: 3px solid var(--group); font-size: 13px; }
+    .bis-group h4 .muted { font-weight: 400; font-size: 12px; }
+    .bis-toggle { background: none; border: 0; color: var(--muted); padding: 0 4px; font-size: 14px; line-height: 1; cursor: pointer; }
+    .bis-row { display: grid; grid-template-columns: 18px 22px minmax(0, 1.4fr) minmax(0, 1fr) 58px 48px 18px; gap: 8px; align-items: center; padding: 3px 6px; background: #11161d; border-radius: 3px; margin-bottom: 2px; font-size: 12px; }
+    .bis-row:hover { background: #161c24; }
+    .bis-rank { color: var(--muted); text-align: right; }
+    .bis-name { min-width: 0; }
+    .bis-name a { text-decoration: none; } .bis-name a:hover { text-decoration: underline; }
+    .bis-sub { display: block; color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bis-source { color: #b1bac4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bis-num { text-align: right; font-variant-numeric: tabular-nums; }
+    .bis-gain { display: inline-block; min-width: 42px; padding: 1px 5px; border-radius: 3px; text-align: right; }
+    .bis-gain.up { background: #12512a; color: #56d364; }
+    .bis-gain.down { color: var(--muted); }
+    .bis-hide { background: none; border: 0; color: var(--muted); cursor: pointer; padding: 0; font-size: 14px; opacity: 0; }
+    .bis-row:hover .bis-hide, .bis-hide:focus { opacity: 1; }
+    .bis-row.gear { grid-template-columns: 70px 22px minmax(0, 1fr) 48px 52px; border-left: 3px solid var(--bracket); }
+    .bis-progress { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 4px 0 10px; font-size: 12px; }
+    .bis-bar { width: 140px; height: 8px; background: #21262d; border-radius: 4px; overflow: hidden; }
+    .bis-bar > span { display: block; height: 100%; background: #1f6feb; }
+    .bis-legend { display: flex; gap: 10px; margin-left: auto; color: var(--muted); }
+    .bis-legend i { display: inline-block; width: 8px; height: 8px; margin-right: 4px; border-radius: 1px; }
+    .bis-weights-head { margin: 4px 0; font-weight: 600; }
+    .bis-class { color: #c69b6d; }
+    .bis-weights h4 { margin: 14px 0 2px; font-size: 13px; }
+    .bis-weight-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 3px 22px; margin: 6px 0; }
+    .bis-weight-grid label { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12px; }
+    .bis-weight-grid input { width: 72px; padding: 2px 6px; font-size: 12px; text-align: right; background: #161b22; border: 1px solid #30363d; color: var(--text); border-radius: 3px; }
+    .bis-import { width: 100%; box-sizing: border-box; background: #161b22; color: var(--text); border: 1px solid #30363d; border-radius: 4px; padding: 6px; font: 12px ui-monospace, monospace; }
+    .bis-buttons { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+    .bis-note { color: var(--muted); font-size: 11px; margin: 6px 14px 10px; }
+    .bis-detail .bis-note { margin: 4px 0; }
+    @media (max-width: 760px) {
+      .bis-main { grid-template-columns: 1fr; }
+      .bis-slots { border-right: 0; border-bottom: 1px solid #21262d; }
+      .bis-row { grid-template-columns: 18px 22px minmax(0, 1fr) 58px 48px 18px; }
+      .bis-source { display: none; }
+    }
     /* Waylaid Crates calculator */
     .waylaid-settings { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; margin: 10px 0 14px; font-size: 13px; }
     .waylaid-settings input[type="number"] { width: 72px; padding: 3px 6px; }
@@ -198,6 +259,9 @@
     .waylaid-market .waylaid-settings { margin: 0 0 6px; }
     .warn { color: #d29922; }
     .q-common { color: var(--q-common); }
+    .q-rare { color: var(--q-rare); }
+    .q-epic { color: var(--q-epic); }
+    .q-legendary { color: var(--q-legendary); }
     .q-uncommon { color: var(--q-uncommon); }
     .waylaid-tier { margin-top: 8px; }
     .waylaid-tier > summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
@@ -306,6 +370,22 @@
     .lf-cat-bars { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px 18px; }
     .lf-cat-bar { display: block; text-align: left; background: none; border: 0; padding: 2px 0; color: #f2e6c9; font: inherit; font-size: 14px; }
     .lf-cat-bar:hover span { color: var(--gold); }
+    .link-button { background: none; border: 0; border-radius: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; text-align: left; }
+    .link-button:hover { text-decoration: underline; }
+    .team-edit summary { cursor: pointer; list-style: none; }
+    .team-edit summary::-webkit-details-marker { display: none; }
+    .team-edit summary h3 { margin: 0; }
+    .team-edit summary h3 > span:first-child::before { content: "▸ "; }
+    .team-edit[open] summary h3 > span:first-child::before { content: "▾ "; }
+    .team-rename { display: flex; align-items: center; gap: 8px; margin: 12px 0; font-size: 13px; color: var(--muted); }
+    .team-pick { display: flex; flex-wrap: wrap; gap: 6px; }
+    .team-pick label { display: flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 99px; padding: 3px 10px; font-size: 13px; cursor: pointer; }
+    .team-pick label:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--panel-2)); }
+    .team-quests th { padding-top: 10px; color: var(--text); }
+    .team-quests tr:first-child th { padding-top: 0; }
+    .team-quests td:first-child { padding-left: 14px; }
+    .team-roster { overflow-x: auto; }
+    .team-roster td { white-space: nowrap; }
     @media (max-width: 720px) {
       .lf-body { grid-template-columns: 1fr; }
       .lf-cats { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--trim); }
@@ -318,8 +398,8 @@
     <h1>⚔️ WoW Dashboard</h1>
     <div class="picker">
       <form id="add" aria-label="Add a character">
-        <select id="add-game" aria-label="Game"><option value="retail">Retail</option><option value="forever">WoW: Forever</option></select>
-        <select id="add-region" aria-label="Region"><option value="us">US</option><option value="eu">EU</option><option value="kr">KR</option><option value="tw">TW</option></select>
+        <select id="add-game" aria-label="Game"><option value="retail">Retail</option><option value="forever">WoW: Forever</option><option value="team">WoW: Forever team</option></select>
+        <select id="add-region" data-game="retail forever" aria-label="Region"><option value="us">US</option><option value="eu">EU</option><option value="kr">KR</option><option value="tw">TW</option></select>
         <input id="add-realm" data-game="retail" list="add-realms" placeholder="Server" aria-label="Server" autocomplete="off" />
         <datalist id="add-realms"></datalist>
         <input id="add-name" placeholder="Name" aria-label="Character name" autocomplete="off" required />

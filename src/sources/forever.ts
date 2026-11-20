@@ -4,6 +4,8 @@ import type { ForeverCharacter, ForeverRuleset } from "../types.js";
 import { blizzardGet } from "./blizzard.js";
 import { errorMessage } from "./http.js";
 import { classTalentTrees } from "./foreverTalents.js";
+import { describe } from "./foreverQuests.js";
+import { toForeverItem, type PreviewItem } from "./foreverItems.js";
 
 const named = (x?: { name?: string } | null) => x?.name ?? null;
 
@@ -26,7 +28,7 @@ interface Summary {
 }
 
 interface Equipment {
-  equipped_items?: { slot: { name: string }; name: string; level?: { value: number }; quality?: { type: string } }[];
+  equipped_items?: (PreviewItem & { item: { id: number }; slot: { type: string; name: string } })[];
 }
 
 // Classic-style talent trees: one group per talent build (dual spec), listing only the trees with points spent.
@@ -79,7 +81,7 @@ interface Professions {
 }
 
 interface Quests {
-  in_progress?: { name: string }[];
+  in_progress?: { id: number; name: string }[];
 }
 
 interface Reputations {
@@ -125,13 +127,17 @@ export async function fetchForeverCharacter(region: string, name: string): Promi
   ]);
 
   const asset = (key: string) => media?.assets?.find((a) => a.key === key)?.value ?? null;
-  // The tree layouts are cached per class after the first load, so this is free for every later character.
-  const talentTrees = summary.character_class
-    ? await classTalentTrees(region, summary.character_class.name).catch((err) => {
-        console.warn(`Forever talent trees unavailable for ${summary.character_class!.name}: ${errorMessage(err)}`);
-        return null;
-      })
-    : null;
+  // Both are cached for the life of the server (tree layouts per class, quest details per quest), so they're cheap after the first load.
+  const [talentTrees, questLog] = await Promise.all([
+    summary.character_class
+      ? classTalentTrees(region, summary.character_class.name).catch((err) => {
+          console.warn(`Forever talent trees unavailable for ${summary.character_class!.name}: ${errorMessage(err)}`);
+          return null;
+        })
+      : null,
+    // Area, type and XP of each quest in the log; a quest the API can't describe keeps just its name.
+    describe(region, new Map((quests?.in_progress ?? []).map((q) => [q.id, q.name]))),
+  ]);
   const builds = specs?.specialization_groups?.map((g) => ({
     active: g.is_active,
     trees: g.specializations
@@ -154,7 +160,16 @@ export async function fetchForeverCharacter(region: string, name: string): Promi
     achievementPoints: summary.achievement_points ?? null,
     lastLogin: summary.last_login_timestamp ? new Date(summary.last_login_timestamp).toISOString() : null,
     insetUrl: asset("inset") ?? asset("avatar"),
-    gear: equipment?.equipped_items?.map((i) => ({ slot: i.slot.name, name: i.name, itemLevel: i.level?.value ?? null, quality: i.quality?.type ?? null })) ?? null,
+    gear: equipment?.equipped_items?.map((i) => ({
+      slot: i.slot.name,
+      slotType: i.slot.type,
+      id: i.item.id,
+      name: i.name,
+      itemLevel: i.level?.value ?? null,
+      quality: i.quality?.type ?? null,
+      // Without any of these the API left the stats out, so the Upgrades view looks the item up instead.
+      item: i.stats || i.armor || i.weapon ? toForeverItem(i.item.id, i) : null,
+    })) ?? null,
     builds,
     talentTrees,
     pvp: pvp
@@ -201,7 +216,7 @@ export async function fetchForeverCharacter(region: string, name: string): Promi
             return { name: p.profession.name, skill: t?.skill_points ?? 0, max: t?.max_skill_points ?? 0, recipes: t?.known_recipes?.length ?? 0, secondary };
           })
       : null,
-    quests: quests ? { inProgress: (quests.in_progress ?? []).map((q) => q.name), completed: completed?.quests?.length ?? null } : null,
+    quests: quests ? { inProgress: questLog, completed: completed?.quests?.length ?? null } : null,
     reputations: reputations?.reputations
       ?.map((r) => ({ faction: r.faction.name, standing: r.standing.name, tier: r.standing.tier, value: r.standing.value, max: r.standing.max }))
       .sort((a, b) => b.tier - a.tier || b.value / (b.max || 1) - a.value / (a.max || 1)) ?? null,

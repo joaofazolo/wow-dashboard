@@ -186,7 +186,17 @@ export interface ForeverCharacter {
   lastLogin: string | null;
   insetUrl: string | null;
   /** Null when the endpoint failed; each section loads on its own. */
-  gear: { slot: string; name: string; itemLevel: number | null; quality: string | null }[] | null;
+  gear: {
+    slot: string;
+    /** Blizzard's slot type: HEAD, FINGER_1, MAIN_HAND… */
+    slotType: string;
+    id: number;
+    name: string;
+    itemLevel: number | null;
+    quality: string | null;
+    /** The worn item's stats (random suffix included), or null when the API left them out. */
+    item: ForeverItem | null;
+  }[] | null;
   /** Talent builds (more than one with dual spec). Each lists its talent trees with points spent, most points first. */
   builds: { active: boolean; trees: { name: string; points: number; talents: { id: number; name: string; rank: number }[] }[] }[] | null;
   /** The class's three talent trees, to draw the builds on. Null if the layout couldn't be loaded. */
@@ -209,7 +219,8 @@ export interface ForeverCharacter {
     mainHandDps: number | null;
   } | null;
   professions: { name: string; skill: number; max: number; recipes: number; secondary: boolean }[] | null;
-  quests: { inProgress: string[]; completed: number | null } | null;
+  /** The quest log, sorted by area then name. */
+  quests: { inProgress: QuestInfo[]; completed: number | null } | null;
   /** Highest standing first. `tier` is 0 (Hated) to 7 (Exalted). */
   reputations: { faction: string; standing: string; tier: number; value: number; max: number }[] | null;
   achievements: { count: number; points: number; recent: { name: string; at: string }[] } | null;
@@ -325,6 +336,48 @@ export interface ForeverLegacy {
   /** Account-wide rewards for total points earned. */
   rewards: { points: number; name: string; kind: string }[];
   challenges: LegacyChallenge[];
+}
+
+/** Item stats the Upgrades view can weigh. Percentage stats are in % (Forever lists them as ratings), the rest in points. */
+export type ItemStat =
+  | "str" | "agi" | "sta" | "int" | "spi"
+  | "ap" | "rap" | "sp" | "heal" | "mp5" | "hp5"
+  | "crit" | "hit" | "exp" | "haste" | "dodge" | "parry" | "block"
+  | "defense" | "blockValue" | "armor" | "bonusArmor";
+
+/** One piece of gear in the shape the Upgrades view scores. */
+export interface ForeverItem {
+  id: number;
+  name: string;
+  quality: string;
+  /** Blizzard's inventory type: HEAD, FINGER, WEAPON, TWOHWEAPON, SHIELD… */
+  inventoryType: string;
+  /** Armor or weapon type: "Plate", "One-Handed Swords"… */
+  subclass: string;
+  /** Blizzard's item class (2 weapon, 4 armor) and subclass ids, which decide who can wear it. */
+  itemClass: number;
+  subclassId: number;
+  icon: string | null;
+  /** 0 when there's no level requirement, as on many dungeon and raid drops. */
+  reqLevel: number;
+  itemLevel: number;
+  stats: Partial<Record<ItemStat, number>>;
+  weapon: { min: number; max: number; speed: number; dps: number } | null;
+  unique: boolean;
+  /** Classes that can use it, when it's class-restricted. */
+  classes: string[] | null;
+  /** Horde or Alliance only. */
+  faction: string | null;
+  /** BOE, BOP or null (no binding). */
+  binding: "BOE" | "BOP" | null;
+  /** The reputation it needs: usually bought from that faction's quartermaster. */
+  reputation: { faction: string; standing: string } | null;
+  /** Made by a profession; skill is null when the recipe is trained. */
+  crafted: { profession: string; skill: number | null } | null;
+  /** Other requirements, as the tooltip says them: "Requires The Watchers - Friendly". */
+  requires: string[];
+  /** Equip, Use and Chance on hit lines; they aren't scored. */
+  effects: string[];
 }
 
 export interface ForeverStatus {
